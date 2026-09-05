@@ -313,6 +313,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        enhancedInput?.activate()
       
         if let window = window {
             setHandlersOn(window: window)
@@ -801,6 +802,7 @@ extension SVideoController: PlayerCommandTarget {
         hideControls.set(!show)
     }
     func enhancedSetPresentation(_ presentation: PlayerPresentation) {
+        enhancedInput?.activate()
         enhancedPresentation = presentation
         pictureInPicture = presentation != .gallery
         style = pictureInPicture ? .pictureInPicture : .regular

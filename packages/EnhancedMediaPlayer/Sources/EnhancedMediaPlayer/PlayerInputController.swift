@@ -30,6 +30,7 @@ public protocol PlayerCommandTarget: AnyObject {
 /// requests Accessibility/Input Monitoring permissions. Consumed events cannot
 /// also reach Telegram's gallery navigation handlers.
 public final class PlayerInputController: NSObject {
+    private(set) var isActive = false
     private weak var target: PlayerCommandTarget?
     private let store: PlayerSettingsStore
     private var monitor: Any?
@@ -73,7 +74,9 @@ public final class PlayerInputController: NSObject {
         seekWork?.cancel(); hideWork?.cancel()
         // The owning adapter explicitly deactivates before releasing the player.
     }
+    public func activate() { isActive = true }
     public func deactivate() {
+        isActive = false
         endTemporarySpeed()
         seekWork?.cancel(); seekWork = nil; seek.reset()
         hideWork?.cancel(); hideWork = nil
@@ -186,7 +189,7 @@ public final class PlayerInputController: NSObject {
             let expected = store.preferences.shortcuts[PlayerAction.temporarySpeed.rawValue]?.modifiers ?? 0
             if event.modifierFlags.rawValue & PlayerShortcut.modifierMask != expected { endTemporarySpeed() }
         }
-        guard store.preferences.enabled, eligible(event), let target = target else { return event }
+        guard isActive, store.preferences.enabled, eligible(event), let target = target else { return event }
         if event.type == .keyDown {
             let shortcut = PlayerShortcut(event.keyCode, event.modifierFlags.rawValue)
             if let action = store.preferences.action(for: shortcut) {

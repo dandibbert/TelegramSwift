@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: enhanced-player-v2-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   test:
     runs-on: macos-15
     timeout-minutes: 20
+    concurrency:
+      group: player-test-${{ github.ref }}
+      cancel-in-progress: true
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -34,20 +34,46 @@ jobs:
           path: ${{ runner.temp }}/player-ui
           if-no-files-found: warn
           retention-days: 7
-  # A full build includes Telegram's large native dependencies. Every source push
-  # runs tests; manually dispatch this workflow or include [build app] in the
-  # commit message to additionally generate the installable application.
+  # Native compilation is expensive. Every push runs tests; manually dispatch
+  # the workflow or add [build app] to a commit to also build an installable app.
   build:
     needs: test
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
     runs-on: macos-15
     timeout-minutes: 150
+    concurrency:
+      group: player-build-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Build application
-        run: bash scripts/ci-build-player.sh
+      - name: Prepare pinned dependencies
+        run: bash scripts/ci-build-player.sh prepare
+      - name: Identify native build inputs
+        id: native-key
+        shell: bash
+        run: |
+          fingerprint=$(git ls-tree -r HEAD core-xprojects scripts/configure_frameworks.sh submodules .gitmodules | shasum -a 256 | cut -d ' ' -f1)
+          echo "key=player-native-v2-macos15-xcode16.4-$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Restore completed native outputs
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: core-xprojects/**/build
+          key: ${{ steps.native-key.outputs.key }}
+      - name: Build native media frameworks
+        run: bash scripts/ci-build-player.sh native
+      - name: Save completed native outputs
+        if: success() && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: core-xprojects/**/build
+          key: ${{ steps.native-key.outputs.key }}
+      - name: Build Telegram application
+        run: bash scripts/ci-build-player.sh application
+      - name: Sign, verify and smoke-test application
+        run: bash scripts/ci-build-player.sh package
       - name: Upload application
         uses: actions/upload-artifact@v4
         with:

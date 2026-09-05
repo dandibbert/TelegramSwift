@@ -1041,7 +1041,7 @@ private final class SVideoControlsView : Control {
         if let mediaPlayer, let quality = mediaPlayer.videoQualityState(), !quality.available.isEmpty {
             image = selectBestQualityIcon(for: quality.preferred).precomposed(.white)
         } else {
-            image = optionsRateImage(rate: String(format: "%.1fx", FastSettings.playingVideoRate), color: .white, isLarge: true)
+            image = optionsRateImage(rate: String(format: "%.1fx", status?.baseRate ?? FastSettings.playingVideoRate), color: .white, isLarge: true)
         }
         menuItems.set(image: image, for: .Normal)
         self.menuItems.sizeToFit()
@@ -1211,9 +1211,8 @@ class SVideoView: NSView {
     func enhancedCanHandleMouse(at point: NSPoint) -> Bool {
         if let adMessageView, !adMessageView.isHidden, adMessageView.frame.contains(point) { return false }
         if let pip = pipControls, !pip.isHidden {
-            let local = pip.convert(point, from: self)
-            let controls: [NSView] = [pip.playOrPause, pip.progress, pip.volumeSlider, pip.volumeToggle, pip.close, pip.fullscreen]
-            if controls.contains(where: { !$0.isHidden && $0.frame.contains(local) }) { return false }
+            let controls: [NSView] = [pip.playOrPause, pip.progress, pip.volumeContainer, pip.close, pip.fullscreen]
+            if controls.contains(where: { !$0.isHiddenOrHasHiddenAncestor && $0.bounds.contains($0.convert(point, from: self)) }) { return false }
         } else if !controls.isHidden && controls.frame.contains(point) { return false }
         return true
     }
@@ -1683,7 +1682,11 @@ class SVideoView: NSView {
         }, for: .Click)
         
         controls.menuItems.contextMenu = { [weak self] in
-            let menu = ContextMenu(presentation: .current(darkPalette))
+            // TGUIKit's custom menu requires its own Window subclass. The mini
+            // player is a genuine NSPanel, so use an NSMenu there instead.
+            let nativeMenu = self?.window != nil && !(self?.window is Window)
+            let menu = ContextMenu(presentation: .current(darkPalette), isLegacy: nativeMenu)
+            let currentRate = self?.status?.baseRate ?? FastSettings.playingVideoRate
             
             menu.onShow = { _ in
                 self?.enhancedMenuOpened?()
@@ -1694,17 +1697,23 @@ class SVideoView: NSView {
             }
             menu.delegate = menu
             
-            let customItem = ContextMenuItem(String(format: "%.1fx", FastSettings.playingVideoRate), image: NSImage(cgImage: generateEmptySettingsIcon(), size: NSMakeSize(24, 24)))
+            if nativeMenu {
+                for rate in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5] {
+                    menu.addItem(ContextMenuItem(String(format: "%.3g×", rate), handler: { [weak self] in
+                        DispatchQueue.main.async { self?.interactions?.setBaseRate(rate) }
+                    }, state: abs(currentRate - rate) < 0.001 ? .on : nil))
+                }
+            } else {
+                let customItem = ContextMenuItem(String(format: "%.1fx", currentRate), image: NSImage(cgImage: generateEmptySettingsIcon(), size: NSMakeSize(24, 24)))
+                menu.addItem(SliderContextMenuItem(volume: currentRate, minValue: 0.25, maxValue: 2.5, midValue: 1, drawable: MenuAnimation.menu_speed, drawable_muted: MenuAnimation.menu_speed, { [weak self] value, _ in
+                    customItem.title = String(format: "%.1fx", value)
+                    self?.interactions?.setBaseRate(value)
+                    self?.controls.updateBaseRate()
+                }))
+                menu.addItem(customItem)
+            }
             
-            menu.addItem(SliderContextMenuItem(volume: FastSettings.playingVideoRate, minValue: 0.2, maxValue: 2.5, midValue: 1, drawable: MenuAnimation.menu_speed, drawable_muted: MenuAnimation.menu_speed, { [weak self] value, _ in
-                customItem.title = String(format: "%.1fx", value)
-                self?.interactions?.setBaseRate(value)
-                self?.controls.updateBaseRate()
-            }))
-            
-            menu.addItem(customItem)
-            
-            if FastSettings.playingVideoRate != 1.0 {
+            if currentRate != 1.0 {
                 menu.addItem(ContextSeparatorItem())
                 menu.addItem(ContextMenuItem(strings().playbackSpeedSetToDefault, handler: { [weak self] in
                     self?.interactions?.setBaseRate(1.0)

@@ -470,6 +470,9 @@ class GalleryViewer: NSResponder {
     
     
     @objc open func windowDidResignKey() {
+        // Enhanced video controls may open a settings window or hand focus to
+        // another app. Do not immediately steal it back from the user's target.
+        if PlayerSettingsStore.shared.preferences.enabled, pager.selectedItem is MGalleryVideoItem { return }
         self.window.makeKeyAndOrderFront(self)
       //  window.makeFirstResponder(self)
     }

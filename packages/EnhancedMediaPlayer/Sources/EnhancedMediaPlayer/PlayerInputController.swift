@@ -183,7 +183,8 @@ public final class PlayerInputController: NSObject {
         }
         return true
     }
-    private func handle(_ event: NSEvent) -> NSEvent? {
+    // Internal so integration tests exercise real event routing, not just commands.
+    func handle(_ event: NSEvent) -> NSEvent? {
         if event.type == .keyUp, event.keyCode == heldKey { endTemporarySpeed(); return nil }
         if event.type == .flagsChanged, heldKey != nil {
             let expected = store.preferences.shortcuts[PlayerAction.temporarySpeed.rawValue]?.modifiers ?? 0
@@ -200,7 +201,7 @@ public final class PlayerInputController: NSObject {
             }
             // Unbinding/remapping must not silently uncover gallery's old keys.
             // This applies only to an active video, never to image galleries.
-            if shortcut.modifiers == 0 && [UInt16(123),124,49,3].contains(shortcut.keyCode) { return nil }
+            if shortcut.modifiers == 0 && [UInt16(123),124,49,3,53].contains(shortcut.keyCode) { return nil }
             return event
         }
         if event.type == .mouseMoved, target.playerPresentation != .gallery {
@@ -217,6 +218,15 @@ public final class PlayerInputController: NSObject {
         guard target.playerInputAllowed else { return event }
         let point = target.playerView.convert(event.locationInWindow, from: nil)
         guard target.playerView.bounds.contains(point), target.playerCanHandleMouse(at: point) else { return event }
+        // The gallery normally closes on the FIRST mouse-up. Consume a canvas
+        // click while double-click playback gestures are enabled, otherwise its
+        // second click would target a gallery which has already disappeared.
+        // Actual controls and clicks outside the video were excluded above.
+        if event.type == .leftMouseUp, event.clickCount == 1,
+           target.playerPresentation == .gallery, store.preferences.doubleClick != .none {
+            target.playerShowControls(true)
+            return nil
+        }
         if event.type == .leftMouseUp, event.clickCount == 2 {
             switch store.preferences.doubleClick {
             case .fullscreen: perform(.fullscreen)

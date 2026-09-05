@@ -153,6 +153,10 @@ public final class PlayerSettingsWindow: NSWindowController {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20)
         ])
         window?.contentView?.layoutSubtreeIfNeeded()
+        // Retile after document height reveals a legacy scrollbar, then resolve
+        // its reduced viewport width before the first frame is displayed.
+        scroll.tile()
+        window?.contentView?.layoutSubtreeIfNeeded()
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }

@@ -105,7 +105,9 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         next.isReleasedWhenClosed = false
         next.acceptsMouseMovedEvents = true
         next.isMovableByWindowBackground = true
-        next.backgroundColor = .black
+        next.backgroundColor = presentation == .mini ? .clear : .black
+        next.isOpaque = presentation != .mini
+        next.hasShadow = true
         next.contentAspectRatio = NSSize(width: ratio, height: 1)
         next.contentMinSize = NSSize(width: max(160, 100 * ratio), height: max(100, 160 / ratio))
         next.delegate = self

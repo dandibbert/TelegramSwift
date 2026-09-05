@@ -5,7 +5,7 @@ public final class PlayerSettingsWindow: NSWindowController {
     private static var instance: PlayerSettingsWindow?
     private let store: PlayerSettingsStore
     private let tabs = NSSegmentedControl(labels: [playerText("控制", "Controls"), playerText("快捷键", "Shortcuts"), playerText("窗口", "Windows")], trackingMode: .selectOne, target: nil, action: nil)
-    private let scroll = NSScrollView()
+    private let scroll = SettingsScrollView()
     private let feedback = NSTextField(labelWithString: "")
     private var recorders: [PlayerAction: ShortcutRecorder] = [:]
 
@@ -71,7 +71,7 @@ public final class PlayerSettingsWindow: NSWindowController {
         feedback.textColor = .secondaryLabelColor
         let document = FlippedSettingsView()
         let stack = NSStackView()
-        document.translatesAutoresizingMaskIntoConstraints = false
+        document.autoresizingMask = [.width]
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 13
         stack.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(stack)
@@ -144,19 +144,12 @@ public final class PlayerSettingsWindow: NSWindowController {
             note(playerText("Shift + 滚动临时调整进度。触控板惯性不会在松手后继续改变音量或进度。", "Shift + scroll seeks. Trackpad inertia never keeps changing volume or position after you release."), in: stack)
         }
         NSLayoutConstraint.activate([
-            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 26),
             stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20)
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 12)
         ])
         window?.contentView?.layoutSubtreeIfNeeded()
-        // Retile after document height reveals a legacy scrollbar, then resolve
-        // its reduced viewport width before the first frame is displayed.
-        scroll.tile()
-        window?.contentView?.layoutSubtreeIfNeeded()
+        scroll.fitDocument()
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }
@@ -202,6 +195,32 @@ public final class PlayerSettingsWindow: NSWindowController {
     }
 }
 
+// An NSScrollView owns its document frame. Do not constrain that frame back to
+// NSClipView: legacy scrollers change the viewport after the document is fitted,
+// and a circular width dependency can leave the document 15 points too wide.
+private final class SettingsScrollView: NSScrollView {
+    private var fittingDocument = false
+    override func tile() { super.tile(); fitDocument() }
+    override func layout() { super.layout(); fitDocument() }
+    func fitDocument() {
+        guard !fittingDocument, let document = documentView,
+              let stack = document.subviews.first as? NSStackView else { return }
+        fittingDocument = true
+        defer { fittingDocument = false }
+        // A document-height change may reveal a legacy scrollbar. Retile and
+        // fit once more using its actual reduced viewport; never reset bounds
+        // origin here, otherwise resizing would jump back to the top.
+        for _ in 0..<3 {
+            let width = max(1, contentSize.width)
+            document.setFrameSize(NSSize(width: width, height: document.frame.height))
+            document.layoutSubtreeIfNeeded()
+            let height = ceil(stack.fittingSize.height + 32)
+            document.setFrameSize(NSSize(width: width, height: height))
+            document.layoutSubtreeIfNeeded()
+            super.tile()
+        }
+    }
+}
 private final class SettingsBackgroundView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()

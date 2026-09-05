@@ -1650,7 +1650,12 @@ class GalleryViewer: NSResponder {
         
     }
     
+    func enhancedNavigate(forward: Bool) {
+        if forward { pager.next() } else { pager.prev() }
+    }
+
     func close(_ animated:Bool = false) -> Void {
+        (pager.selectedItem as? MGalleryVideoItem)?.enhancedGalleryWillClose()
         disposable.dispose()
         readyDispose.dispose()
         didSetReady = false

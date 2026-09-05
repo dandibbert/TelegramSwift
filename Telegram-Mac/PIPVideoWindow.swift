@@ -1,24 +1,11 @@
-//
-//  PIPVideoWindow.swift
-//  Telegram
-//
-//  Created by keepcoder on 26/04/2017.
-//  Copyright © 2017 Telegram. All rights reserved.
-//
-
+// Telegram's media session is reused across the gallery, detached window and PiP.
+// No second decoder, export, URL bridge or global input monitor is created.
 import Cocoa
 import TGUIKit
-import AVKit
 import SwiftSignalKit
 import TelegramMedia
 
-private let pipFrameKey: String = "kPipFrameKey3"
-
- enum PictureInPictureControlMode {
-    case normal
-    case pip
-}
-
+enum PictureInPictureControlMode { case normal, pip }
 protocol PictureInPictureControl {
     func pause()
     func play()
@@ -27,329 +14,278 @@ protocol PictureInPictureControl {
     func isPlaying() -> Bool
     var view: NSView { get }
     var isPictureInPicture: Bool { get }
-    
     func setMode(_ mode: PictureInPictureControlMode, animated: Bool)
 }
 
-
-private class PictureInpictureView : Control {
-    private weak var __window: Window?
-    init(frame: NSRect, window: Window) {
-        __window = window
-        super.init(frame: frame)
-        autoresizesSubviews = true
-    }
-    
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-    }
-    
-    override func mouseExited(with event: NSEvent) {
-        super.mouseEntered(with: event)
-    }
-    
-    required init?(coder decoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    required init(frame frameRect: NSRect) {
-        fatalError("init(frame:) has not been implemented")
-    }
-    
-    override var window: NSWindow? {
-        set {
-
-        }
-        get {
-            return __window
-        }
-    }
+private final class EnhancedMiniPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
-fileprivate class ModernPictureInPictureVideoWindow: NSPanel {
-    private let saver: WindowSaver
-    fileprivate let __window: Window
-    fileprivate let control: PictureInPictureControl
-    private let rect:NSRect
-    private let restoreRect: NSRect
-    fileprivate var forcePaused: Bool = false
-    fileprivate let item: MGalleryItem
-    fileprivate weak var _delegate: InteractionContentViewProtocol?
-    fileprivate let _contentInteractions:ChatMediaLayoutParameters?
-    fileprivate let _type: GalleryAppearType
-    fileprivate let viewer: GalleryViewer
-    fileprivate var eventLocalMonitor: Any?
-    fileprivate var eventGlobalMonitor: Any?
-    private var hideAnimated: Bool = true
-    private let lookAtMessageDisposable = MetaDisposable()
-    init(_ control: PictureInPictureControl, item: MGalleryItem, viewer: GalleryViewer, origin:NSPoint, delegate:InteractionContentViewProtocol? = nil, contentInteractions:ChatMediaLayoutParameters? = nil, type: GalleryAppearType) {
-        self.viewer = viewer
-        self._delegate = delegate
-        self._contentInteractions = contentInteractions
-        self._type = type
-        self.control = control
-        let minSize = control.view.frame.size.aspectFilled(NSMakeSize(120, 120))
-        let size = item.notFittedSize.aspectFilled(NSMakeSize(250, 250)).aspectFilled(minSize)
-        let newRect = NSMakeRect(origin.x, origin.y, size.width, size.height)
-        self.rect = newRect
-        self.restoreRect = NSMakeRect(origin.x, origin.y, control.view.frame.width, control.view.frame.height)
-        self.item = item
-        __window = Window(contentRect: newRect, styleMask: [.resizable], backing: .buffered, defer: true)
-        __window.name = "pip"
-        self.saver = .find(for: __window)
-        __window.setFrame(NSMakeRect(3000, 3000, saver.rect.width, saver.rect.height), display: true)
-        super.init(contentRect: newRect, styleMask: [.resizable, .nonactivatingPanel], backing: .buffered, defer: true)
+private final class FloatingVideoSession: NSObject, NSWindowDelegate {
+    let control: SVideoController
+    let item: MGalleryItem
+    let viewer: GalleryViewer
+    private weak var contentDelegate: InteractionContentViewProtocol?
+    private let interactions: ChatMediaLayoutParameters?
+    private let type: GalleryAppearType
+    private let sourceOrigin: NSPoint
+    private var window: NSWindow?
+    private(set) var presentation: PlayerPresentation
+    var forcePaused = false
+    private var transitioning = false
+    private var pendingPresentation: PlayerPresentation?
+    private var pendingReturn = false
+    private var settingsObserver: NSObjectProtocol?
+    private var screensObserver: NSObjectProtocol?
+    private var mouseMonitor: Any?
+    private let messageDisposable = MetaDisposable()
+    private var saveWork: DispatchWorkItem?
+    private var isChangingWindow = false
+    private var pinned: Bool
+    var isFullscreen: Bool { window?.styleMask.contains(.fullScreen) == true }
 
-        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary];
-
-        
-        
-        let view = PictureInpictureView(frame: bounds, window: __window)
-        self.contentView = view
-        
-        view.forceMouseDownCanMoveWindow = true
-        
-        self.contentView?.layer?.cornerRadius = 4;
-
-        self.backgroundColor = .clear;
-        control.view.frame = NSMakeRect(0, 0, newRect.width, newRect.height)
-        
-
-        control.view.setFrameOrigin(0, 0)
-        contentView?.addSubview(control.view)
-        
-        
-        __window.set(mouseHandler: { event -> KeyHandlerResult in
-            NSCursor.arrow.set()
-            return .invoked
-        }, with: self, for: .mouseMoved, priority: .low)
-        
-        __window.set(mouseHandler: { event -> KeyHandlerResult in
-            NSCursor.arrow.set()
-            return .invoked
-        }, with: self, for: .mouseEntered, priority: .low)
-        
-        __window.set(mouseHandler: { event -> KeyHandlerResult in
-            return .invoked
-        }, with: self, for: .mouseExited, priority: .low)
-        
-        
-        __window.set(mouseHandler: { [weak self] event -> KeyHandlerResult in
-            if event.clickCount == 2, let strongSelf = self {
-                let inner = strongSelf.control.view.convert(event.locationInWindow, from: nil)                
-                if NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == strongSelf.windowNumber, strongSelf.control.view.hitTest(inner) is MediaPlayerView {
-                    strongSelf.hide()
-                }
-            }
-            return .invoked
-        }, with: self, for: .leftMouseDown, priority: .low)
-        
-        
-        __window.set(mouseHandler: { [weak self] event -> KeyHandlerResult in
-            self?.findAndMoveToCorner()
-            return .rejected
-        }, with: self, for: .leftMouseUp, priority: .low)
-        
-        
-        self.level = .modalPanel
-        self.isMovableByWindowBackground = true
-
-        NotificationCenter.default.addObserver(self, selector: #selector(windowDidResized(_:)), name: NSWindow.didResizeNotification, object: self)
-
-        
-        
-        eventLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .mouseEntered, .mouseExited, .leftMouseDown, .leftMouseUp], handler: { [weak self] event in
-            guard let `self` = self else {return event}
-            self.__window.sendEvent(event)
+    init(control: SVideoController, item: MGalleryItem, viewer: GalleryViewer, origin: NSPoint,
+         delegate: InteractionContentViewProtocol?, interactions: ChatMediaLayoutParameters?, type: GalleryAppearType) {
+        self.control = control; self.item = item; self.viewer = viewer
+        self.contentDelegate = delegate; self.interactions = interactions; self.type = type; self.sourceOrigin = origin
+        self.presentation = control.enhancedInitialPresentation
+        let p = PlayerSettingsStore.shared.preferences
+        self.pinned = presentation == .mini ? p.miniOnTop : p.detachedOnTop
+        super.init()
+    }
+    func start() {
+        makeWindow()
+        settingsObserver = NotificationCenter.default.addObserver(forName: PlayerSettingsStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            let p = PlayerSettingsStore.shared.preferences
+            self.pinned = self.presentation == .mini ? p.miniOnTop : p.detachedOnTop
+            self.applyWindowPolicy()
+        }
+        screensObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnScreen() }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+            if event.window === self?.window { self?.snapIfNeeded() }
             return event
-        })
-        
-        eventGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .mouseEntered, .mouseExited, .leftMouseDown, .leftMouseUp], handler: { [weak self] event in
-                guard let `self` = self else {return}
-                self.__window.sendEvent(event)
-            })
-
-
+        }
+        // Keep the upstream privacy behavior: deleted/expired messages close PiP.
         if let message = item.entry.message {
-            let messageView = item.context.account.postbox.messageView(message.id) |> deliverOnMainQueue
-            lookAtMessageDisposable.set(messageView.start(next: { [weak self] view in
-                if view.message == nil {
-                    self?.hideAnimated = true
-                    self?.hide()
-                }
+            messageDisposable.set((item.context.account.postbox.messageView(message.id) |> deliverOnMainQueue).start(next: { [weak self] value in
+                if value.message == nil { self?.close() }
             }))
         }
-        
-        self.control.setMode(.pip, animated: true)
     }
-    
-    func hide() {
-        
-
-        
-        if hideAnimated {
-            contentView?._change(opacity: 0, animated: true, duration: 0.1, timingFunction: .linear)
-            setFrame(NSMakeRect(frame.minX + (frame.width - 0) / 2, frame.minY + (frame.height - 0) / 2, 0, 0), display: true, animate: true)
+    private func makeWindow() {
+        isChangingWindow = true
+        let previousScreen = window?.screen
+        control.enhancedInput?.deactivate()
+        control.view.removeFromSuperview()
+        window?.delegate = nil
+        (window as? Window)?.removeAllHandlers(for: control)
+        window?.close()
+        let screen = previousScreen ?? NSScreen.screens.first(where: { $0.frame.contains(sourceOrigin) }) ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let raw = item.notFittedSize
+        let ratio = raw.width > 0 && raw.height > 0 ? raw.width / raw.height : 16.0 / 9.0
+        let width: CGFloat = presentation == .mini ? 340 : min(900, visible.width * 0.75)
+        let height = min(visible.height * 0.8, width / ratio)
+        let size = NSSize(width: height * ratio, height: height)
+        let rect = NSRect(x: visible.maxX - size.width - 24, y: visible.maxY - size.height - 40, width: size.width, height: size.height)
+        let next: NSWindow
+        if presentation == .mini {
+            let panel = EnhancedMiniPanel(contentRect: rect, styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.hidesOnDeactivate = false; panel.isFloatingPanel = true
+            panel.becomesKeyOnlyIfNeeded = false
+            next = panel
+        } else {
+            let player = Window(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            player.name = "enhanced-video-player"
+            player.title = playerText("独立播放器 · Telegram Player", "Video · Telegram Player")
+            next = player
         }
-        
-        orderOut(nil)
-        window = nil
-        __window.removeAllHandlers(for: self)
-        if let monitor = eventLocalMonitor {
-            NSEvent.removeMonitor(monitor)
+        next.isReleasedWhenClosed = false
+        next.acceptsMouseMovedEvents = true
+        next.isMovableByWindowBackground = true
+        next.backgroundColor = .black
+        next.contentAspectRatio = NSSize(width: ratio, height: 1)
+        next.contentMinSize = NSSize(width: max(160, 100 * ratio), height: max(100, 160 / ratio))
+        next.delegate = self
+        if #available(macOS 10.14, *) { next.appearance = NSAppearance(named: .darkAqua) }
+        let root = NSView(frame: NSRect(origin: .zero, size: size))
+        root.wantsLayer = true; root.layer?.backgroundColor = NSColor.black.cgColor
+        if presentation == .mini { root.layer?.cornerRadius = 10; root.layer?.masksToBounds = true }
+        next.contentView = root
+        control.view.frame = root.bounds
+        control.view.autoresizingMask = [.width, .height]
+        root.addSubview(control.view)
+        window = next
+        if PlayerSettingsStore.shared.preferences.rememberWindow,
+           let stored = UserDefaults.standard.string(forKey: frameKey) {
+            let saved = NSRectFromString(stored)
+            if [saved.minX, saved.minY, saved.width, saved.height].allSatisfy({ $0.isFinite }),
+               saved.width >= 160, saved.height >= 100 { next.setFrame(saved, display: false) }
         }
-        if let monitor = eventGlobalMonitor {
-            NSEvent.removeMonitor(monitor)
+        applyWindowPolicy()
+        keepOnScreen()
+        next.makeKeyAndOrderFront(nil)
+        control.enhancedSetPresentation(presentation)
+        control.playerShowControls(true)
+        isChangingWindow = false
+    }
+    private var frameKey: String { "EnhancedMediaPlayer.window.\(presentation.rawValue).v1" }
+    private func applyWindowPolicy() {
+        guard let window = window else { return }
+        let p = PlayerSettingsStore.shared.preferences
+        window.level = isFullscreen ? .normal : (pinned ? .floating : .normal)
+        if !isFullscreen && !transitioning {
+            let all = presentation == .mini ? p.miniAllSpaces : p.detachedAllSpaces
+            window.collectionBehavior = presentation == .mini ? [.fullScreenAuxiliary] : [.fullScreenPrimary]
+            if all { window.collectionBehavior.insert(.canJoinAllSpaces) }
         }
     }
-
-    override func orderOut(_ sender: Any?) {
-        super.orderOut(sender)
-        window = nil
-        if control.isPictureInPicture {
-            control.pause()
+    func changePresentation(_ mode: PlayerPresentation) {
+        guard mode != .gallery else { returnToGallery(); return }
+        guard presentation != mode else { return }
+        if isFullscreen || transitioning {
+            pendingPresentation = mode
+            if !transitioning { toggleFullscreen() }
+            return
         }
+        saveFrame()
+        presentation = mode
+        let p = PlayerSettingsStore.shared.preferences
+        pinned = mode == .mini ? p.miniOnTop : p.detachedOnTop
+        makeWindow()
     }
-
-    func openGallery() {
-        setFrame(restoreRect, display: true, animate: true)
-        hideAnimated = false
-        hide()
-        showGalleryFromPip(item: item, gallery: self.viewer, delegate: _delegate, contentInteractions: _contentInteractions, type: _type)
+    func togglePin() {
+        pinned.toggle(); applyWindowPolicy()
+        control.enhancedInput?.show(pinned ? playerText("播放器已置顶", "Player pinned") : playerText("已取消置顶", "Player unpinned"))
     }
-
+    func toggleFullscreen() {
+        guard !transitioning else { return }
+        if presentation == .mini { changePresentation(.detached) }
+        window?.level = .normal
+        if !isFullscreen { window?.collectionBehavior = [.fullScreenPrimary] }
+        transitioning = true
+        window?.toggleFullScreen(nil)
+    }
+    func returnToGallery() {
+        if isFullscreen || transitioning {
+            pendingReturn = true
+            if !transitioning { toggleFullscreen() }
+            return
+        }
+        let wasPlaying = control.isPlaying()
+        releaseWindow()
+        if floatingVideoSession === self { floatingVideoSession = nil }
+        if let current = getGalleryViewer(), current !== viewer { closeGalleryViewer(false) }
+        control.enhancedResumeOnGallery = wasPlaying
+        control.enhancedSetPresentation(.gallery)
+        showGalleryFromPip(item: item, gallery: viewer, delegate: contentDelegate, contentInteractions: interactions, type: type)
+    }
+    func close() {
+        // Closing is synchronous, including during native fullscreen transitions.
+        // Clear the delegate before closing so an obsolete session cannot later
+        // clear a newer floating session in a delayed fullscreen callback.
+        control.pause()
+        releaseWindow()
+        if floatingVideoSession === self { floatingVideoSession = nil }
+        control.enhancedSetPresentation(.gallery)
+        control.enhancedInput?.deactivate()
+    }
+    private func releaseWindow() {
+        saveFrame(); saveWork?.cancel()
+        control.enhancedInput?.deactivate()
+        control.view.removeFromSuperview()
+        (window as? Window)?.removeAllHandlers(for: control)
+        window?.delegate = nil; window?.close(); window = nil
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { close(); return false }
+    func windowWillEnterFullScreen(_ notification: Notification) { transitioning = true }
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        transitioning = false
+        control.genericView.set(isInFullScreen: true)
+        if pendingReturn || pendingPresentation != nil { toggleFullscreen() }
+    }
+    func windowWillExitFullScreen(_ notification: Notification) { transitioning = true }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        transitioning = false
+        control.genericView.set(isInFullScreen: false)
+        applyWindowPolicy()
+        if pendingReturn { pendingReturn = false; returnToGallery() }
+        else if let mode = pendingPresentation { pendingPresentation = nil; changePresentation(mode) }
+    }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { transitioning = false; applyWindowPolicy() }
+    func windowDidFailToExitFullScreen(_ window: NSWindow) { transitioning = false; applyWindowPolicy() }
+    func windowDidMove(_ notification: Notification) { scheduleSave() }
+    func windowDidResize(_ notification: Notification) { scheduleSave() }
+    private func scheduleSave() {
+        guard !isChangingWindow, !transitioning else { return }
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.saveFrame() }
+        saveWork = work; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+    private func saveFrame() {
+        guard PlayerSettingsStore.shared.preferences.rememberWindow, let window = window,
+              !isFullscreen, !transitioning else { return }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: frameKey)
+    }
+    private func keepOnScreen() {
+        guard let window = window, !isFullscreen else { return }
+        let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(NSPoint(x: window.frame.midX, y: window.frame.midY)) }) ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        var frame = window.frame
+        let scale = min(1, min(visible.width / frame.width, visible.height / frame.height))
+        frame.size = NSSize(width: frame.width * scale, height: frame.height * scale)
+        frame.origin.x = max(visible.minX, min(frame.minX, visible.maxX - frame.width))
+        frame.origin.y = max(visible.minY, min(frame.minY, visible.maxY - frame.height))
+        window.setFrame(frame, display: true)
+    }
+    private func snapIfNeeded() {
+        guard presentation == .mini, PlayerSettingsStore.shared.preferences.snapToCorners,
+              let window = window, let visible = window.screen?.visibleFrame else { return }
+        var frame = window.frame
+        if abs(frame.minX - visible.minX) < 32 { frame.origin.x = visible.minX + 12 }
+        else if abs(frame.maxX - visible.maxX) < 32 { frame.origin.x = visible.maxX - frame.width - 12 }
+        if abs(frame.minY - visible.minY) < 32 { frame.origin.y = visible.minY + 12 }
+        else if abs(frame.maxY - visible.maxY) < 32 { frame.origin.y = visible.maxY - frame.height - 12 }
+        window.setFrame(frame, display: true, animate: true)
+        saveFrame()
+    }
     deinit {
-        lookAtMessageDisposable.dispose()
-        if control.isPictureInPicture {
-            control.pause()
-        }
-        self.control.setMode(.normal, animated: true)
-        NotificationCenter.default.removeObserver(self)
+        messageDisposable.dispose(); saveWork?.cancel()
+        if let observer = settingsObserver { NotificationCenter.default.removeObserver(observer) }
+        if let observer = screensObserver { NotificationCenter.default.removeObserver(observer) }
+        if let monitor = mouseMonitor { NSEvent.removeMonitor(monitor) }
+        // Deliberately no pause here: presentation changes must never pause the session.
     }
-
-    override func animationResizeTime(_ newFrame: NSRect) -> TimeInterval {
-        return 0.2
-    }
-
-    @objc func windowDidResized(_ notification: Notification) {
-    
-    }
-
-    private func findAndMoveToCorner() {
-        if let screen = self.screen {
-            let rect = screen.frame.offsetBy(dx: -screen.visibleFrame.minX, dy: -screen.visibleFrame.minY)
-            
-            let point = self.frame.offsetBy(dx: -screen.visibleFrame.minX, dy: -screen.visibleFrame.minY)
-            
-            var options:BorderType = []
-            
-            if point.maxX > rect.width && point.minX < rect.width {
-                options.insert(.Right)
-            }
-            
-            if point.minX < 0 {
-                options.insert(.Left)
-            }
-            
-            if point.minY < 0 {
-                options.insert(.Bottom)
-            }
-            
-            
-            var newFrame = self.frame
-            
-            if options.contains(.Right) {
-                newFrame.origin.x = screen.visibleFrame.maxX - newFrame.width - 30
-            }
-            if options.contains(.Bottom) {
-                newFrame.origin.y = screen.visibleFrame.minY + 30
-            }
-            if options.contains(.Left) {
-                newFrame.origin.x = screen.visibleFrame.minX + 30
-            }
-            setFrame(newFrame, display: true, animate: true)
-
-        }
-    }
-    
-
-    override var isResizable: Bool {
-        return true
-    }
-    override func setFrame(_ frameRect: NSRect, display flag: Bool, animate animateFlag: Bool) {
-        super.setFrame(frameRect, display: flag, animate: animateFlag)
-        saver.rect = frameRect
-        saver.save()
-    }
-
-    override func makeKeyAndOrderFront(_ sender: Any?) {
-        super.makeKeyAndOrderFront(sender)
-        if let screen = NSScreen.main {
-            let savedRect: NSRect = NSMakeRect(0, 0, screen.frame.width * 0.3, screen.frame.width * 0.3)
-            let convert_s = self.rect.size.aspectFilled(NSMakeSize(min(savedRect.width, 250), min(savedRect.height, 250)))
-            self.aspectRatio = self.rect.size.fitted(NSMakeSize(savedRect.width, savedRect.height))
-            self.minSize = self.rect.size.aspectFitted(NSMakeSize(savedRect.width, savedRect.height)).aspectFilled(NSMakeSize(120, 120))
-            
-            let frame = NSScreen.main?.frame ?? NSMakeRect(0, 0, 1920, 1080)
-            
-            self.maxSize = self.rect.size.aspectFitted(frame.size)
-            
-            var rect = saver.rect.size.bounds
-            rect.origin = NSMakePoint(screen.frame.width - convert_s.width - 30, screen.frame.height - convert_s.height - 50)
-
-            self.setFrame(NSMakeRect(rect.minX, rect.minY, convert_s.width, convert_s.height), display: true, animate: true)
-           
-        }
-    }
-
-
 }
 
-
-
-private var window: NSWindow?
-
-
-var hasPictureInPicture: Bool {
-    return window != nil
-}
-
-func showPipVideo(control: PictureInPictureControl, viewer: GalleryViewer, item: MGalleryItem, origin: NSPoint, delegate:InteractionContentViewProtocol? = nil, contentInteractions:ChatMediaLayoutParameters? = nil, type: GalleryAppearType) {
+private var floatingVideoSession: FloatingVideoSession?
+var hasPictureInPicture: Bool { floatingVideoSession != nil }
+var enhancedFloatingIsFullscreen: Bool { floatingVideoSession?.isFullscreen == true }
+func showPipVideo(control: PictureInPictureControl, viewer: GalleryViewer, item: MGalleryItem, origin: NSPoint,
+                  delegate: InteractionContentViewProtocol? = nil, contentInteractions: ChatMediaLayoutParameters? = nil, type: GalleryAppearType) {
+    guard let video = control as? SVideoController else { return }
     closePipVideo()
-    window = ModernPictureInPictureVideoWindow(control, item: item, viewer: viewer, origin: origin, delegate: delegate, contentInteractions: contentInteractions, type: type)
-    window?.makeKeyAndOrderFront(nil)
+    let session = FloatingVideoSession(control: video, item: item, viewer: viewer, origin: origin,
+                                       delegate: delegate, interactions: contentInteractions, type: type)
+    floatingVideoSession = session
+    session.start()
 }
-
-
-func exitPictureInPicture() {
-    if let window = window as? ModernPictureInPictureVideoWindow {
-        window.openGallery()
-    }
-}
-
+func enhancedChangeFloatingPresentation(_ mode: PlayerPresentation) { floatingVideoSession?.changePresentation(mode) }
+func enhancedToggleFloatingFullscreen() { floatingVideoSession?.toggleFullscreen() }
+func enhancedToggleFloatingPin() { floatingVideoSession?.togglePin() }
+func enhancedFloatingUserInteracted() { floatingVideoSession?.forcePaused = false }
+func exitPictureInPicture() { floatingVideoSession?.returnToGallery() }
+func closePipVideo() { floatingVideoSession?.close() }
 func pausepip() {
-    if let window = window as? ModernPictureInPictureVideoWindow {
-        if window.control.isPlaying() {
-            window.control.pause()
-            window.forcePaused = true
-        }
+    if let session = floatingVideoSession, session.control.isPlaying() {
+        session.control.pause(); session.forcePaused = true
     }
 }
-
 func playPipIfNeeded() {
-    if let window = window as? ModernPictureInPictureVideoWindow, window.forcePaused, window.control.isPlaying()  {
-        window.control.play()
-        window.forcePaused = false
+    if let session = floatingVideoSession, session.forcePaused {
+        session.forcePaused = false
+        if !session.control.isPlaying() { session.control.play() }
     }
-}
-
-
-
-func closePipVideo() {
-    if let window = window as? ModernPictureInPictureVideoWindow {
-        window.hide()
-        window.control.pause()
-    }
-    window = nil
-    
 }

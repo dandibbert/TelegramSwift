@@ -1668,6 +1668,9 @@
 		D0E82E002500F10E00E09A20 /* MergedAvatarsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E82DFF2500F10E00E09A20 /* MergedAvatarsView.swift */; };
 		D0FCA7622434867400B72F18 /* PeerInfoHeadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0FCA7612434867400B72F18 /* PeerInfoHeadItem.swift */; };
 		D0FFC4AC23E184BA0044D305 /* ChatListFilterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0FFC4AB23E184BA0044D305 /* ChatListFilterController.swift */; };
+		86E254FCC6F88B9C088BEDC3 /* PlayerPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63630AC82BEA1681B075AD9C /* PlayerPreferences.swift */; };
+		407A75C93E5F53E5920CBFD5 /* PlayerInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED20BE0F2EDA79AC1FD0E14D /* PlayerInputController.swift */; };
+		F5624D8118145268DEFB9940 /* PlayerSettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6755A72886B406EB68EB041 /* PlayerSettingsWindow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -3358,6 +3361,9 @@
 		D0E82DFF2500F10E00E09A20 /* MergedAvatarsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MergedAvatarsView.swift; sourceTree = "<group>"; };
 		D0FCA7612434867400B72F18 /* PeerInfoHeadItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerInfoHeadItem.swift; sourceTree = "<group>"; };
 		D0FFC4AB23E184BA0044D305 /* ChatListFilterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatListFilterController.swift; sourceTree = "<group>"; };
+		63630AC82BEA1681B075AD9C /* PlayerPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerPreferences.swift"; sourceTree = SOURCE_ROOT; };
+		ED20BE0F2EDA79AC1FD0E14D /* PlayerInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerInputController.swift"; sourceTree = SOURCE_ROOT; };
+		E6755A72886B406EB68EB041 /* PlayerSettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerSettingsWindow.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -8143,6 +8149,9 @@
 				D0A2764E249C9D6B005E3C77 /* PeerPhotos.swift in Sources */,
 				9FC8ADA22062E2DF0094F7B4 /* PassportNewPhoneNumberRowItem.swift in Sources */,
 				9F0E6F7A203EFE870086699C /* Preferences.swift in Sources */,
+				86E254FCC6F88B9C088BEDC3 /* PlayerPreferences.swift in Sources */,
+				407A75C93E5F53E5920CBFD5 /* PlayerInputController.swift in Sources */,
+				F5624D8118145268DEFB9940 /* PlayerSettingsWindow.swift in Sources */,
 				9F0AE6BE2199BEBE00A8B53A /* SVideoController.swift in Sources */,
 				9F580BE520A0AA7B00F6D56C /* ChatRecorderOverlayWindow.swift in Sources */,
 				27EFF4C127BBF49700006834 /* Auth_Insets.swift in Sources */,
@@ -8810,7 +8819,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_TESTABILITY = YES;
@@ -8837,7 +8846,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				NEW_SETTING = "";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram.FocusIntents;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer.FocusIntents;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -8870,7 +8879,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -8889,7 +8898,7 @@
 				MARKETING_VERSION = 1.0;
 				MTL_FAST_MATH = YES;
 				NEW_SETTING = "";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram.FocusIntents;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer.FocusIntents;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -8963,7 +8972,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 245482;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -9009,7 +9018,7 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/macosx/libswiftAppKit.dylib",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PRODUCTION;
@@ -9034,7 +9043,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 245682;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
 				GCC_C_LANGUAGE_STANDARD = c17;
@@ -9062,7 +9071,7 @@
 				OTHER_CODE_SIGN_FLAGS = "";
 				OTHER_LDFLAGS = "$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/macosx/libswiftAppKit.dylib";
 				OTHER_SWIFT_FLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram.TelegramShare;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer.TelegramShare;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = NO;
@@ -9086,7 +9095,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 245682;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
 				GCC_C_LANGUAGE_STANDARD = c17;
@@ -9115,7 +9124,7 @@
 				OTHER_LDFLAGS = "$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/macosx/libswiftAppKit.dylib";
 				OTHER_SWIFT_FLAGS = "$(inherited)";
 				"OTHER_SWIFT_FLAGS[arch=*]" = "";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram.TelegramShare;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer.TelegramShare;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = NO;
@@ -9194,7 +9203,7 @@
 				CURRENT_PROJECT_VERSION = 245482;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 6N38VWS5BX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -9240,7 +9249,7 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/macosx/libswiftAppKit.dylib",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = ru.keepcoder.Telegram;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.dandibbert.TelegramPlayer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;

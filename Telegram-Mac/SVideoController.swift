@@ -35,6 +35,13 @@ enum SVideoStyle {
 
 
 class SVideoController: GenericViewController<SVideoView>, PictureInPictureControl {
+    private(set) var enhancedInput: PlayerInputController?
+    private(set) var enhancedPresentation: PlayerPresentation = .gallery
+    var enhancedInitialPresentation: PlayerPresentation = .mini
+    var enhancedResumeOnGallery: Bool?
+    private var enhancedCurrentRate: Double = 1
+    private var enhancedSettingsObserver: NSObjectProtocol?
+
     
     
    
@@ -127,9 +134,9 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         }
     }
     
-    func setBaseRate(_ baseRate: Double) {        
-        mediaPlayer.setBaseRate(baseRate)
-        FastSettings.setPlayingVideoRate(baseRate)
+    func setBaseRate(_ baseRate: Double) {
+        enhancedInput?.endTemporarySpeed()
+        playerSetRate(baseRate, persist: true)
     }
     
     func playOrPause() {
@@ -163,7 +170,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     
     private func updateIdleTimer() {
         NSCursor.unhide()
-        hideOnIdleDisposable.set((Signal<NoValue, NoError>.complete() |> delay(1.0, queue: Queue.mainQueue())).start(completed: { [weak self] in
+        hideOnIdleDisposable.set((Signal<NoValue, NoError>.complete() |> delay(PlayerSettingsStore.shared.preferences.controlsHideDelay, queue: Queue.mainQueue())).start(completed: { [weak self] in
             guard let `self` = self else {return}
             let hide = !self.genericView.isInMenu && !self.genericView.insideControls && !contextMenuOnScreen()
             self.hideControls.set(hide)
@@ -274,23 +281,6 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
             return .rejected
         }, with: self, for: .leftMouseUp, priority: .modal)
         
-        let fromUser1 = TelegramUser(id: PeerId(1), accessHash: nil, firstName: strings().appearanceSettingsChatPreviewUserName1, lastName: "", username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
-        
-        let fromUser2 = TelegramUser(id: PeerId(2), accessHash: nil, firstName: strings().appearanceSettingsChatPreviewUserName2, lastName: "", username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
-
-        let timestamp2: Int32 = 60 * 22 + 60 * 60 * 18
-
-        
-        let message = Message(stableId: 2, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 1), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, threadId: nil, timestamp: timestamp2, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: fromUser1, text: "10.3.0 - [FirebaseAnalytics][I-ACS002002] Measurement timer scheduled to fire in approx. (s): -0.0616508722305297910.3.0 - [FirebaseAnalytics][I-ACS002002] Measurement timer scheduled to fire in approx. (s): -0.06165087223052979", attributes: [AdMessageAttribute(opaqueId: Data(), messageType: .sponsored, url: "https://t.me/durov", buttonText: "Please", sponsorInfo: "Durov Corp.", additionalInfo: "", canReport: true, hasContentMedia: false, minDisplayDuration: 10, maxDisplayDuration: 20)], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
-
-      
-        
-        window.set(handler: { [weak self] _ in
-            self?.runAdMessages([message], 10, 15)
-            
-            return .invoked
-        }, with: self, for: .T, priority: .supreme, modifierFlags: [.command])
-        
 //        self.updateControls = SwiftSignalKit.Timer(timeout: 2.0, repeat: true, completion: { [weak self] in
 //            self?.updateControlVisibility()
 //        }, queue: .mainQueue())
@@ -331,7 +321,8 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     }
     
     override func viewDidDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
+        super.viewDidDisappear(animated)
+        if enhancedPresentation == .gallery { enhancedInput?.deactivate() }
         hideOnIdleDisposable.set(nil)
         _ = enableScreenSleep()
         NSCursor.unhide()
@@ -357,7 +348,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     func unhideControlsIfNeeded(_ forceUnhideControls: Bool = true) -> Bool {
         forceHiddenControls = !forceUnhideControls
         if controlsIsHidden {
-            hideControls.set(forceUnhideControls)
+            hideControls.set(false)
             return true
         }
         return false
@@ -431,6 +422,15 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        enhancedInput = PlayerInputController(target: self)
+        enhancedCurrentRate = PlayerSettingsStore.shared.preferences.rememberSpeed ? FastSettings.playingVideoRate : 1
+        mediaPlayer.setBaseRate(enhancedCurrentRate)
+        genericView.enhancedAction = { [weak self] action in self?.enhancedInput?.perform(action) }
+        genericView.enhancedIsFloating = { [weak self] in (self?.enhancedPresentation ?? .gallery) != .gallery }
+        genericView.enhancedMenuOpened = { [weak self] in self?.enhancedInput?.endTemporarySpeed() }
+        genericView.enhancedRefreshSeekButtons()
+        enhancedSettingsObserver = NotificationCenter.default.addObserver(forName: PlayerSettingsStore.didChange,
+            object: nil, queue: .main) { [weak self] _ in self?.genericView.enhancedRefreshSeekButtons() }
         
         let account = self.account
         
@@ -513,6 +513,12 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
             _ = statusValue.swap(status)
            
             self?.genericView.status = status
+            self?.enhancedInput?.observe(position: status.timestamp)
+            switch status.status {
+            case .playing: self?.isPaused = false
+            case .paused: self?.isPaused = true
+            case let .buffering(_, whilePlaying): self?.isPaused = !whilePlaying
+            }
         }))
         let size = reference.media.resource.size ?? 0
         
@@ -542,6 +548,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         genericView.interactions = SVideoInteractions(playOrPause: { [weak self] in
             self?.playOrPause()
         }, rewind: { [weak self] timestamp in
+            self?.enhancedInput?.cancelPendingSeek()
             self?.mediaPlayer.seek(timestamp)
         }, scrobbling: { [weak self] timecode in
             guard let `self` = self else { return }
@@ -628,18 +635,25 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     }
     
     func togglePictureInPicture() {
+        guard !isControlsLimited else { return }
+        if enhancedPresentation != .gallery {
+            enhancedChangeFloatingPresentation(enhancedPresentation == .mini ? .detached : .mini)
+            return
+        }
         if let function = togglePictureInPictureImpl {
             if fullScreenRestoreState != nil {
                 toggleFullScreen()
             }
-            self.pictureInPicture = !pictureInPicture
+            self.pictureInPicture = true
+            self.style = .pictureInPicture
+            self.enhancedPresentation = enhancedInitialPresentation
             window?.removeAllHandlers(for: self)
             function(pictureInPicture, self)
             if let window = view.window?.contentView?.window as? Window {
                 setHandlersOn(window: window)
             }
             
-            genericView.set(isInPictureInPicture: pictureInPicture)
+            genericView.set(isInPictureInPicture: enhancedPresentation == .mini)
         }
     }
     
@@ -649,18 +663,28 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     
     
     func rewindBackward() {
-        genericView.rewindBackward()
+        enhancedInput?.perform(.seekBackward)
     }
     func rewindForward() {
-        genericView.rewindForward()
+        enhancedInput?.perform(.seekForward)
     }
     
     var isFullscreen: Bool {
-        return self.fullScreenRestoreState != nil
+        return self.fullScreenRestoreState != nil || (enhancedPresentation != .gallery && enhancedFloatingIsFullscreen)
     }
     
     func toggleFullScreen() {
-        if let screen = NSScreen.main {
+        if enhancedPresentation != .gallery {
+            enhancedToggleFloatingFullscreen()
+            return
+        }
+        if PlayerSettingsStore.shared.preferences.enabled, fullScreenRestoreState == nil, togglePictureInPictureImpl != nil {
+            enhancedInitialPresentation = .detached
+            togglePictureInPicture()
+            enhancedToggleFloatingFullscreen()
+            return
+        }
+        if let screen = view.window?.screen ?? NSScreen.main {
             if let window = fullScreenWindow, let state = fullScreenRestoreState {
                 
                 var topInset: CGFloat = 0
@@ -717,6 +741,8 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     }
     
     deinit {
+        enhancedInput?.deactivate()
+        if let observer = enhancedSettingsObserver { NotificationCenter.default.removeObserver(observer) }
         statusDisposable.dispose()
         bufferingDisposable.dispose()
         hideOnIdleDisposable.dispose()
@@ -732,4 +758,86 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         _ = IOPMAssertionRelease(assertionID)
     }
     
+}
+
+
+extension SVideoController: PlayerCommandTarget {
+    var playerView: NSView { genericView }
+    var playerPresentation: PlayerPresentation { enhancedPresentation }
+    var playerInputAllowed: Bool {
+        return !isControlsLimited && genericView.enhancedPlaybackControlsAllowed && !genericView.isInMenu && !contextMenuOnScreen()
+    }
+    var playerSnapshot: PlayerSnapshot {
+        let status = genericView.status
+        return PlayerSnapshot(position: status?.timestamp ?? 0, duration: status?.duration ?? 0,
+                              volume: Double(status?.volume ?? FastSettings.volumeRate),
+                              rate: enhancedCurrentRate, playing: !isPaused)
+    }
+    func playerSeek(to timestamp: Double) {
+        guard playerInputAllowed, timestamp.isFinite else { return }
+        mediaPlayer.seek(max(0, min(timestamp, playerSnapshot.duration)))
+    }
+    func playerSetVolume(_ volume: Double) {
+        guard volume.isFinite else { return }
+        let value = Float(max(0, min(1, volume)))
+        mediaPlayer.setVolume(value)
+        FastSettings.setVolumeRate(value)
+        genericView.status = genericView.status?.withUpdatedVolume(value)
+    }
+    func playerSetRate(_ rate: Double, persist: Bool) {
+        guard rate.isFinite else { return }
+        enhancedCurrentRate = max(0.25, min(2.5, rate))
+        mediaPlayer.setBaseRate(enhancedCurrentRate)
+        if persist && PlayerSettingsStore.shared.preferences.rememberSpeed {
+            FastSettings.setPlayingVideoRate(enhancedCurrentRate)
+        }
+    }
+    func playerCanHandleMouse(at point: NSPoint) -> Bool {
+        return genericView.enhancedCanHandleMouse(at: point)
+    }
+    func playerShowControls(_ show: Bool) {
+        if !show && (genericView.insideControls || genericView.isInMenu) { return }
+        forceHiddenControls = false
+        hideControls.set(!show)
+    }
+    func enhancedSetPresentation(_ presentation: PlayerPresentation) {
+        enhancedPresentation = presentation
+        pictureInPicture = presentation != .gallery
+        style = pictureInPicture ? .pictureInPicture : .regular
+        genericView.setMode(presentation == .mini ? .pip : .normal, animated: false)
+        genericView.set(isInPictureInPicture: presentation == .mini)
+        genericView.set(isInFullScreen: false)
+        mediaPlayer.setVideoLayerGravity(.resizeAspect)
+        if let window = view.window as? Window { setHandlersOn(window: window) }
+        if presentation == .gallery { enhancedInitialPresentation = .mini }
+    }
+    func playerPerform(_ action: PlayerAction) {
+        switch action {
+        case .playPause:
+            if enhancedPresentation != .gallery { enhancedFloatingUserInteracted() }
+            playOrPause()
+        case .fullscreen: toggleFullScreen()
+        case .pictureInPicture:
+            enhancedInitialPresentation = .mini
+            togglePictureInPicture()
+        case .detach:
+            if enhancedPresentation == .detached { exitPictureInPicture() }
+            else if enhancedPresentation == .mini { enhancedChangeFloatingPresentation(.detached) }
+            else { enhancedInitialPresentation = .detached; togglePictureInPicture() }
+        case .pin:
+            if enhancedPresentation == .gallery {
+                enhancedInitialPresentation = .detached; togglePictureInPicture()
+            }
+            enhancedToggleFloatingPin()
+        case .previous, .next:
+            if enhancedPresentation == .gallery { getGalleryViewer()?.enhancedNavigate(forward: action == .next) }
+            else { enhancedInput?.show(playerText("请先返回媒体浏览器", "Return to the gallery to browse media")) }
+        case .escape:
+            if isFullscreen { toggleFullScreen() }
+            else if enhancedPresentation != .gallery { exitPictureInPicture() }
+            else { closeGalleryViewer(true) }
+        case .settings: PlayerSettingsWindow.show()
+        default: break
+        }
+    }
 }

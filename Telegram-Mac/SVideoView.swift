@@ -793,8 +793,8 @@ private final class SVideoControlsView : Control {
         rewindForward.isHidden = rewindForward.isHidden || frame.width < 450
         rewindBackward.isHidden = rewindBackward.isHidden || frame.width < 450
 
-        rewindForward.isEnabled = status.duration > 30 && !status.generationTimestamp.isZero
-        rewindBackward.isEnabled = status.duration > 30 && !status.generationTimestamp.isZero
+        rewindForward.isEnabled = status.duration > 0
+        rewindBackward.isEnabled = status.duration > 0
         rewindForward.layer?.opacity = rewindForward.isEnabled ? 1.0 : 0.3
         rewindBackward.layer?.opacity = rewindForward.isEnabled ? 1.0 : 0.3
         
@@ -1202,6 +1202,44 @@ private final class PreviewView : View {
 
 
 class SVideoView: NSView {
+    var enhancedAction: ((PlayerAction) -> Void)?
+    var enhancedIsFloating: (() -> Bool)?
+    var enhancedMenuOpened: (() -> Void)?
+
+    var enhancedPlaybackControlsAllowed: Bool { adMessageView == nil }
+
+    func enhancedCanHandleMouse(at point: NSPoint) -> Bool {
+        if let adMessageView, !adMessageView.isHidden, adMessageView.frame.contains(point) { return false }
+        if let pip = pipControls, !pip.isHidden {
+            let local = pip.convert(point, from: self)
+            let controls: [NSView] = [pip.playOrPause, pip.progress, pip.volumeSlider, pip.volumeToggle, pip.close, pip.fullscreen]
+            if controls.contains(where: { !$0.isHidden && $0.frame.contains(local) }) { return false }
+        } else if !controls.isHidden && controls.frame.contains(point) { return false }
+        return true
+    }
+    func enhancedRefreshSeekButtons() {
+        let step = PlayerSettingsStore.shared.preferences.seekStep
+        for (button, prefix) in [(controls.rewindBackward, "−"), (controls.rewindForward, "+")] {
+            let title = prefix + String(format: "%.3g", step) + "s"
+            let image = NSImage(size: NSSize(width: 44, height: 26), flipped: false) { rect in
+                let style = NSMutableParagraphStyle(); style.alignment = .center
+                (title as NSString).draw(in: rect.insetBy(dx: 0, dy: 4), withAttributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                    .foregroundColor: NSColor.white, .paragraphStyle: style])
+                return true
+            }
+            button.set(image: image, for: .Normal)
+            button.toolTip = title
+            _ = button.sizeToFit()
+        }
+        needsLayout = true
+    }
+    override func rightMouseDown(with event: NSEvent) {
+        if enhancedIsFloating?() == true, let menu = controls.menuItems.contextMenu?() {
+            AppMenu.show(menu: menu, event: event, for: self)
+        } else { super.rightMouseDown(with: event) }
+    }
+
     
     var initialedSize: NSSize = NSZeroSize
     
@@ -1532,9 +1570,7 @@ class SVideoView: NSView {
         guard let window = window else {return false}
         let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if pipControls != nil {
-            if NSPointInRect(point, bounds) {
-                return !controls.isHidden
-            }
+            return !enhancedCanHandleMouse(at: point)
         }
         if let adMessageView, NSPointInRect(point, adMessageView.frame) {
             return true
@@ -1626,17 +1662,11 @@ class SVideoView: NSView {
         }, for: .Click)
         
         controls.rewindForward.set(handler: { [weak self] _ in
-            guard let `self` = self else {return}
-            if let status = self.status {
-                self.interactions?.rewind(min(status.timestamp + 15, status.duration))
-            }
+            self?.enhancedAction?(.seekForward)
         }, for: .Click)
         
         controls.rewindBackward.set(handler: { [weak self] _ in
-            guard let `self` = self else {return}
-            if let status = self.status {
-                self.interactions?.rewind(max(status.timestamp - 15, 0))
-            }
+            self?.enhancedAction?(.seekBackward)
         }, for: .Click)
         
         controls.toggleFullscreen.set(handler: { [weak self] _ in
@@ -1656,6 +1686,7 @@ class SVideoView: NSView {
             let menu = ContextMenu(presentation: .current(darkPalette))
             
             menu.onShow = { _ in
+                self?.enhancedMenuOpened?()
                 self?.isInMenu = true
             }
             menu.onClose = {
@@ -1699,6 +1730,14 @@ class SVideoView: NSView {
             }
 
             
+            menu.addItem(ContextSeparatorItem())
+            for action in [PlayerAction.detach, .pictureInPicture, .pin, .settings] {
+                let key = PlayerSettingsStore.shared.preferences.shortcuts[action.rawValue]?.display ?? ""
+                menu.addItem(ContextMenuItem(action.title + (key.isEmpty ? "" : "    " + key), handler: { [weak self] in
+                    // Let the menu finish closing before routing a playback command.
+                    DispatchQueue.main.async { self?.enhancedAction?(action) }
+                }))
+            }
             menu.appearance = darkPalette.appearance
             return menu
         }

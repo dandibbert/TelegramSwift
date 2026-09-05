@@ -337,6 +337,11 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        guard ApiEnvironment.ensurePersonalCredentials() else {
+            NSApp.terminate(nil)
+            return
+        }
+
         
         _ = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
             return BrowserStateContext.checkKey(event)
@@ -1288,6 +1293,14 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
 
     @IBAction func checkForUpdates(_ sender: Any) {
+        if ApiEnvironment.isPersonalPlayerBuild {
+            let alert = NSAlert()
+            alert.messageText = playerText("这是播放器增强自用版", "Personal enhanced-player build")
+            alert.informativeText = playerText("此版本不会安装官方 Telegram 更新，以免覆盖播放器增强功能。新版 App 由你自己的 GitHub Actions 构建提供。", "Official Telegram updates are disabled to preserve your player enhancements. Install newer builds from your own GitHub Actions artifacts.")
+            alert.runModal()
+            return
+        }
+
         #if !APP_STORE
             showModal(with: InputDataModalController(AppUpdateViewController()), for: window)
             #if STABLE

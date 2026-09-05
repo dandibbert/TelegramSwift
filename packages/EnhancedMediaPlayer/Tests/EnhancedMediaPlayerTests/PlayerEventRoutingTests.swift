@@ -3,6 +3,15 @@ import AppKit
 import XCTest
 @testable import EnhancedMediaPlayer
 
+// A command-line XCTest host cannot reliably become the WindowServer's key
+// application on hosted runners. Only that OS-owned state is supplied by this
+// fixture. Events, window identity, view geometry and responder checks remain
+// real AppKit objects. Both key and non-key branches are explicitly tested;
+// this does not claim physical-key or full application UI automation coverage.
+private final class EventWindow: NSWindow {
+    var keyState = true
+    override var isKeyWindow: Bool { keyState }
+}
 private final class EventTarget: PlayerCommandTarget {
     let playerView = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 450))
     var playerSnapshot = PlayerSnapshot(position: 10, duration: 100, volume: 0.5, rate: 1, playing: true)
@@ -18,7 +27,7 @@ private final class EventTarget: PlayerCommandTarget {
     func playerShowControls(_ show: Bool) {}
 }
 final class PlayerEventRoutingTests: XCTestCase {
-    private var window: NSWindow!
+    private var window: EventWindow!
     private var target: EventTarget!
     private var input: PlayerInputController!
     private var store: PlayerSettingsStore!
@@ -26,29 +35,21 @@ final class PlayerEventRoutingTests: XCTestCase {
     private var suite: String!
     override func setUp() {
         _ = NSApplication.shared
-        // SwiftPM's command-line XCTest host starts with prohibited activation.
-        // Register it as a GUI app so key-window tests use real AppKit focus;
-        // never weaken the production isKeyWindow guard to make tests pass.
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
         suite = "PlayerEventRoutingTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!
         store = PlayerSettingsStore(defaults: defaults)
         store.update { $0.showOSD = false }
         target = EventTarget()
-        window = NSWindow(contentRect: target.playerView.bounds, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window = EventWindow(contentRect: target.playerView.bounds, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = target.playerView
-        window.makeKeyAndOrderFront(nil)
-        for _ in 0..<50 where !window.isKeyWindow {
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-            window.makeKey()
-        }
+        window.orderFront(nil)
         input = PlayerInputController(target: target, store: store)
         input.activate()
     }
     override func tearDown() {
         input.deactivate(); input = nil
+        window.keyState = false
         window.close(); window = nil
         target = nil
         defaults.removePersistentDomain(forName: suite)
@@ -92,8 +93,13 @@ final class PlayerEventRoutingTests: XCTestCase {
         XCTAssertNotNil(input.handle(try key(49)))
         XCTAssertTrue(target.actions.isEmpty)
     }
+    func testNonKeyWindowNeverConsumesKeyboardEvents() throws {
+        window.keyState = false
+        XCTAssertNotNil(input.handle(try key(49)))
+        XCTAssertNotNil(input.handle(try key(123)))
+        XCTAssertTrue(target.actions.isEmpty)
+    }
     func testClearedEscapeCannotFallThroughToLegacyGalleryClose() throws {
-        XCTAssertTrue(window.isKeyWindow)
         store.update { $0.shortcuts.removeValue(forKey: PlayerAction.escape.rawValue) }
         XCTAssertNil(input.handle(try key(53)))
         XCTAssertTrue(target.actions.isEmpty)
@@ -107,7 +113,6 @@ final class PlayerEventRoutingTests: XCTestCase {
         XCTAssertTrue(target.actions.isEmpty)
     }
     func testReboundActionConsumesExactlyOnce() throws {
-        XCTAssertTrue(window.isKeyWindow)
         store.update { $0.shortcuts[PlayerAction.playPause.rawValue] = PlayerShortcut(40, PlayerShortcut.option) }
         XCTAssertNil(input.handle(try key(40, flags: .option)))
         XCTAssertEqual(target.actions, [.playPause])

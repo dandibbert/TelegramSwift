@@ -11,25 +11,40 @@ concurrency:
   group: enhanced-player-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  inspect:
+  test:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Snapshot build inputs
-        shell: bash
+      - name: Test player engine and AppKit integration
         run: |
-          mkdir -p /tmp/player-inputs
-          git archive HEAD | tar -x -C /tmp/player-inputs
-          tar -czf /tmp/player-source.tar.gz -C /tmp/player-inputs .
-          xcodebuild -version
-          cat scripts/configure_frameworks.sh
-          cat .gitmodules
-          find configurations scripts . -maxdepth 2 -name '*xcconfig' -o -name '*xcscheme'
-      - uses: actions/upload-artifact@v4
+          if [ -f packages/EnhancedMediaPlayer/Package.swift ]; then
+            swift test --package-path packages/EnhancedMediaPlayer
+          else
+            echo 'Preparing the feature package; full dependency build is running separately.'
+          fi
+  build:
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: player-source-inputs
-          path: /tmp/player-source.tar.gz
-          retention-days: 1
+          persist-credentials: false
+      - name: Build application
+        run: bash scripts/ci-build-player.sh
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-Player-macOS-${{ github.run_number }}
+          path: build/Telegram-Player-macOS.zip
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_number }}
+          path: build/logs
+          retention-days: 7

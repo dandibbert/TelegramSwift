@@ -25,7 +25,7 @@ public final class PlayerSettingsWindow: NSWindowController {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.center()
-        let root = NSView(frame: window.contentView!.bounds)
+        let root = SettingsBackgroundView(frame: window.contentView!.bounds)
         window.contentView = root
         let heading = NSTextField(labelWithString: playerText("让播放顺手一点", "Make playback yours"))
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
@@ -63,13 +63,15 @@ public final class PlayerSettingsWindow: NSWindowController {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     @objc private func selectTab() { reload() }
+    // Also used by UI smoke tests to verify all settings pages at narrow widths.
+    func selectPage(_ index: Int) { tabs.selectedSegment = max(0, min(2, index)); reload() }
     public func reload() {
         recorders.removeAll()
         feedback.stringValue = playerText("自动保存 · 仅在播放器内响应按键", "Saved automatically · Shortcuts are local to the player")
         feedback.textColor = .secondaryLabelColor
         let document = FlippedSettingsView()
         let stack = NSStackView()
-        document.stack = stack
+        document.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 13
         stack.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(stack)
@@ -142,15 +144,15 @@ public final class PlayerSettingsWindow: NSWindowController {
             note(playerText("Shift + 滚动临时调整进度。触控板惯性不会在松手后继续改变音量或进度。", "Shift + scroll seeks. Trackpad inertia never keeps changing volume or position after you release."), in: stack)
         }
         NSLayoutConstraint.activate([
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 26),
             stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 12)
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -20)
         ])
-        let width = max(640, scroll.contentSize.width)
-        document.frame = NSRect(x: 0, y: 0, width: width, height: 1)
-        document.layoutSubtreeIfNeeded()
-        document.frame.size.height = stack.fittingSize.height + 32
-        document.autoresizingMask = [.width]
+        window?.contentView?.layoutSubtreeIfNeeded()
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }
@@ -162,6 +164,7 @@ public final class PlayerSettingsWindow: NSWindowController {
     private func note(_ text: String, in stack: NSStackView) {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 11); label.textColor = .secondaryLabelColor
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stack.addArrangedSubview(label)
         label.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
@@ -195,15 +198,14 @@ public final class PlayerSettingsWindow: NSWindowController {
     }
 }
 
-private final class FlippedSettingsView: NSView {
-    weak var stack: NSStackView?
-    override var isFlipped: Bool { true }
-    override func layout() {
-        super.layout()
-        guard let stack = stack else { return }
-        let height = stack.fittingSize.height + 32
-        if abs(frame.height - height) > 0.5 { setFrameSize(NSSize(width: frame.width, height: height)) }
+private final class SettingsBackgroundView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
     }
+}
+private final class FlippedSettingsView: NSView {
+    override var isFlipped: Bool { true }
 }
 private final class CallbackButton: NSButton {
     var callback: () -> Void

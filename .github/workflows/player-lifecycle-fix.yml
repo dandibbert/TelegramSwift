@@ -1,0 +1,47 @@
+name: Finalize player lifecycle
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+    paths: [.github/workflows/player-lifecycle-fix.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'dandibbert/TelegramSwift' && github.ref == 'refs/heads/feat/enhanced-media-player'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply exact verified source edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib
+          specs = {
+              'packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerInputController.swift': (
+                  '7d6f3b4d678b98cbbef2bb3bf1da0923a879bee06d5f873c2faff7ae11ec82cb', [
+                      ('    private weak var target: PlayerCommandTarget?', '    private(set) var isActive = false\n    private weak var target: PlayerCommandTarget?'),
+                      ('    public func deactivate() {\n        endTemporarySpeed()', '    public func activate() { isActive = true }\n    public func deactivate() {\n        isActive = false\n        endTemporarySpeed()'),
+                      ('guard store.preferences.enabled, eligible(event), let target = target else', 'guard isActive, store.preferences.enabled, eligible(event), let target = target else')]),
+              'Telegram-Mac/SVideoController.swift': (
+                  'b12deed38cecd8c01eb3380f44daf75f6f5a21074007070180051fc5fee29f6e', [
+                      ('        super.viewDidAppear(animated)\n', '        super.viewDidAppear(animated)\n        enhancedInput?.activate()\n'),
+                      ('    func enhancedSetPresentation(_ presentation: PlayerPresentation) {\n', '    func enhancedSetPresentation(_ presentation: PlayerPresentation) {\n        enhancedInput?.activate()\n')])
+          }
+          for name, (digest, edits) in specs.items():
+              p = pathlib.Path(name)
+              data = p.read_bytes()
+              assert hashlib.sha256(data).hexdigest() == digest, f'Unexpected source: {name}'
+              text = data.decode()
+              for before, after in edits:
+                  assert text.count(before) == 1, f'Non-unique edit: {name}'
+                  text = text.replace(before, after, 1)
+              p.write_text(text)
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Telegram-Mac/SVideoController.swift packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerInputController.swift
+          git commit -m 'fix: suspend shortcut routing for inactive cached gallery players [skip ci]'
+          git push origin HEAD:refs/heads/feat/enhanced-media-player

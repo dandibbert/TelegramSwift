@@ -1,0 +1,35 @@
+name: Enhanced Media Player
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: enhanced-player-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  inspect:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Snapshot build inputs
+        shell: bash
+        run: |
+          mkdir -p /tmp/player-inputs
+          git archive HEAD | tar -x -C /tmp/player-inputs
+          tar -czf /tmp/player-source.tar.gz -C /tmp/player-inputs .
+          xcodebuild -version
+          cat scripts/configure_frameworks.sh
+          cat .gitmodules
+          find configurations scripts . -maxdepth 2 -name '*xcconfig' -o -name '*xcscheme'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-source-inputs
+          path: /tmp/player-source.tar.gz
+          retention-days: 1

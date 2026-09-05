@@ -8,76 +8,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: enhanced-player-${{ github.ref }}
+  group: enhanced-player-v2-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      revision: ${{ steps.source.outputs.revision }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Materialize verified source changes
-        id: source
-        env:
-          SOURCE_EVENT: ${{ github.event_name }}
-          SOURCE_REF: ${{ github.ref }}
-          SOURCE_REPOSITORY: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -d .github/player-bootstrap ]; then
-            test "$SOURCE_EVENT" = push
-            test "$SOURCE_REF" = refs/heads/feat/enhanced-media-player
-            test "$SOURCE_REPOSITORY" = dandibbert/TelegramSwift
-            python3 - <<'PY'
-          import base64, hashlib, json, lzma, pathlib
-          root = pathlib.Path.cwd().resolve()
-          parts = [root / '.github/player-bootstrap' / f'{i:02}.b64' for i in range(5)]
-          payload = base64.b64decode(''.join(p.read_text() for p in parts), validate=True)
-          assert hashlib.sha256(payload).hexdigest() == '5c8e034caefd582e8c92e65f970ef77053ff999ad75995a542578064a799fce3', 'Source archive integrity check failed'
-          bundle = json.loads(lzma.decompress(payload))
-          def safe_path(name):
-              p = pathlib.PurePosixPath(name)
-              assert not p.is_absolute() and '..' not in p.parts
-              assert name.startswith(('Telegram-Mac/', 'Telegram.xcodeproj/', 'packages/ApiCredentials/', 'packages/EnhancedMediaPlayer/', 'docs/'))
-              dest = root / p
-              assert dest.resolve().is_relative_to(root)
-              assert not dest.is_symlink()
-              return dest
-          for name, spec in bundle['edits'].items():
-              p = safe_path(name)
-              before = p.read_bytes()
-              assert hashlib.sha256(before).hexdigest() == spec['base'], f'Unexpected source revision: {name}'
-              lines = before.decode().splitlines(keepends=True)
-              for start, count, text in reversed(spec['chunks']):
-                  assert 0 <= start <= len(lines) and count >= 0
-                  lines[start:start + count] = [text]
-              after = ''.join(lines).encode()
-              assert hashlib.sha256(after).hexdigest() == spec['result'], f'Patch integrity check failed: {name}'
-              p.write_bytes(after)
-          for name, content in bundle['files'].items():
-              p = safe_path(name)
-              assert not p.exists(), f'Refusing to replace existing file: {name}'
-              p.parent.mkdir(parents=True, exist_ok=True)
-              p.write_text(content)
-          for p in parts:
-              p.unlink()
-          (root / '.github/player-bootstrap').rmdir()
-          print(f"Verified and applied {len(bundle['edits'])} patches and {len(bundle['files'])} new source files")
-          PY
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add Telegram-Mac Telegram.xcodeproj packages/ApiCredentials packages/EnhancedMediaPlayer docs .github/player-bootstrap
-            git commit -m 'feat: add configurable player controls and detached mini windows [skip ci]'
-            git push origin HEAD:refs/heads/feat/enhanced-media-player
-          fi
-          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   test:
-    needs: prepare
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -85,7 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
       - name: Test player engine and AppKit integration
         env:
@@ -93,7 +26,7 @@ jobs:
         run: swift test --package-path packages/EnhancedMediaPlayer
       - name: Typecheck personal credential bootstrap
         run: swift build --package-path packages/ApiCredentials
-      - name: Upload settings UI smoke snapshot
+      - name: Upload settings UI smoke snapshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -101,14 +34,17 @@ jobs:
           path: ${{ runner.temp }}/player-ui
           if-no-files-found: warn
           retention-days: 7
+  # A full build includes Telegram's large native dependencies. Every source push
+  # runs tests; manually dispatch this workflow or include [build app] in the
+  # commit message to additionally generate the installable application.
   build:
-    needs: prepare
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
     runs-on: macos-15
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
       - name: Build application
         run: bash scripts/ci-build-player.sh

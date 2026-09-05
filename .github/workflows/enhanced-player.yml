@@ -82,13 +82,14 @@ jobs:
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-      PLAYER_UI_SNAPSHOT_DIR: ${{ runner.temp }}/player-ui
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.revision }}
           persist-credentials: false
       - name: Test player engine and AppKit integration
+        env:
+          PLAYER_UI_SNAPSHOT_DIR: ${{ runner.temp }}/player-ui
         run: swift test --package-path packages/EnhancedMediaPlayer
       - name: Typecheck personal credential bootstrap
         run: swift build --package-path packages/ApiCredentials

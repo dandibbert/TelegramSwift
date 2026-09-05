@@ -26,6 +26,11 @@ final class PlayerEventRoutingTests: XCTestCase {
     private var suite: String!
     override func setUp() {
         _ = NSApplication.shared
+        // SwiftPM's command-line XCTest host starts with prohibited activation.
+        // Register it as a GUI app so key-window tests use real AppKit focus;
+        // never weaken the production isKeyWindow guard to make tests pass.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
         suite = "PlayerEventRoutingTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!
         store = PlayerSettingsStore(defaults: defaults)
@@ -35,7 +40,10 @@ final class PlayerEventRoutingTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = target.playerView
         window.makeKeyAndOrderFront(nil)
-        window.becomeKey()
+        for _ in 0..<50 where !window.isKeyWindow {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+            window.makeKey()
+        }
         input = PlayerInputController(target: target, store: store)
         input.activate()
     }

@@ -1,12 +1,6 @@
 name: Player Framework Regression
 on:
-  push:
-    branches: [feat/enhanced-media-player]
-    paths:
-      - .github/workflows/player-framework-check.yml
-      - scripts/ci-build-player.sh
-      - submodules/CodeSyntax/**
-      - .gitmodules
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read

@@ -1227,7 +1227,7 @@ class SVideoView: NSView {
                     .foregroundColor: NSColor.white, .paragraphStyle: style])
                 return true
             }
-            button.set(image: image, for: .Normal)
+            button.set(image: image.precomposed(), for: .Normal)
             button.toolTip = title
             _ = button.sizeToFit()
         }

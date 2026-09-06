@@ -10,6 +10,17 @@ import Foundation
 import TGUIKit
 import TgVoipWebrtc
 import SwiftSignalKit
+import AVFoundation
+
+// Keep the 10.14 API behind an independently typechecked function,
+// including calls from the nested signal/state-update closures.
+private func desktopCaptureCameraIsAuthorized() -> Bool {
+    if #available(OSX 10.14, *) {
+        return AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+    } else {
+        return true
+    }
+}
 
 
 struct DesktopCapturerObjectWrapper : Equatable {
@@ -345,11 +356,7 @@ final class DesktopCaptureListUI : GenericViewController<HorizontalTableView> {
             
             updateState { current in
                 var current = current
-                if #available(macOS 10.14, *) {
-                    current.access = .init(sharing: screenCaptureAvailable(), camera: AVCaptureDevice.authorizationStatus(for: .video) == .authorized)
-                } else {
-                    current.access = .init(sharing: screenCaptureAvailable(), camera: true)
-                }
+                current.access = .init(sharing: screenCaptureAvailable(), camera: desktopCaptureCameraIsAuthorized())
                 return current
             }
             checkSelected()

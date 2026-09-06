@@ -339,7 +339,7 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             }, thumb: GeneralThumbAdditional(thumb: theme.icons.account_add_account, textInset: 35, thumbInset: 0), border:[BorderType.Right], inset:NSEdgeInsets(left: 12, right: 12))
         case let .playback(_, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: playerText("播放器", "Playback"), icon: theme.icons.settingsGeneral, activeIcon: theme.icons.settingsGeneralActive, type: .next, viewType: viewType, action: {
-                PlayerSettingsWindow.show()
+                arguments.presentController(PlayerSettingsController(), true)
             }, border: [BorderType.Right], inset: NSEdgeInsets(left: 12, right: 12))
         case let .general(_, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().accountSettingsGeneral, icon: theme.icons.settingsGeneral, activeIcon: theme.icons.settingsGeneralActive, type: .next, viewType: viewType, action: {

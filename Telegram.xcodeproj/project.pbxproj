@@ -1670,7 +1670,8 @@
 		D0FFC4AC23E184BA0044D305 /* ChatListFilterController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0FFC4AB23E184BA0044D305 /* ChatListFilterController.swift */; };
 		86E254FCC6F88B9C088BEDC3 /* PlayerPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63630AC82BEA1681B075AD9C /* PlayerPreferences.swift */; };
 		407A75C93E5F53E5920CBFD5 /* PlayerInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED20BE0F2EDA79AC1FD0E14D /* PlayerInputController.swift */; };
-		F5624D8118145268DEFB9940 /* PlayerSettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6755A72886B406EB68EB041 /* PlayerSettingsWindow.swift */; };
+		F5624D8118145268DEFB9940 /* PlayerSettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6755A72886B406EB68EB041 /* PlayerSettingsController.swift */; };
+		FEDD031F0000000000000001 /* PlayerAppSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDD031F0000000000000002 /* PlayerAppSmoke.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -3363,7 +3364,8 @@
 		D0FFC4AB23E184BA0044D305 /* ChatListFilterController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatListFilterController.swift; sourceTree = "<group>"; };
 		63630AC82BEA1681B075AD9C /* PlayerPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerPreferences.swift"; sourceTree = SOURCE_ROOT; };
 		ED20BE0F2EDA79AC1FD0E14D /* PlayerInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerInputController.swift"; sourceTree = SOURCE_ROOT; };
-		E6755A72886B406EB68EB041 /* PlayerSettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "packages/EnhancedMediaPlayer/Sources/EnhancedMediaPlayer/PlayerSettingsWindow.swift"; sourceTree = SOURCE_ROOT; };
+		E6755A72886B406EB68EB041 /* PlayerSettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Telegram-Mac/PlayerSettingsController.swift"; sourceTree = SOURCE_ROOT; };
+		FEDD031F0000000000000002 /* PlayerAppSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Telegram-Mac/PlayerAppSmoke.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -8151,7 +8153,8 @@
 				9F0E6F7A203EFE870086699C /* Preferences.swift in Sources */,
 				86E254FCC6F88B9C088BEDC3 /* PlayerPreferences.swift in Sources */,
 				407A75C93E5F53E5920CBFD5 /* PlayerInputController.swift in Sources */,
-				F5624D8118145268DEFB9940 /* PlayerSettingsWindow.swift in Sources */,
+				F5624D8118145268DEFB9940 /* PlayerSettingsController.swift in Sources */,
+				FEDD031F0000000000000001 /* PlayerAppSmoke.swift in Sources */,
 				9F0AE6BE2199BEBE00A8B53A /* SVideoController.swift in Sources */,
 				9F580BE520A0AA7B00F6D56C /* ChatRecorderOverlayWindow.swift in Sources */,
 				27EFF4C127BBF49700006834 /* Auth_Insets.swift in Sources */,

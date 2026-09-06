@@ -1653,6 +1653,8 @@ class GalleryViewer: NSResponder {
         
     }
     
+    func enhancedIsSelectedVideo(_ item: MGalleryVideoItem) -> Bool { pager.selectedItem === item }
+
     func enhancedNavigate(forward: Bool) {
         if forward { pager.next() } else { pager.prev() }
     }

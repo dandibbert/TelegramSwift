@@ -337,10 +337,18 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-        guard ApiEnvironment.ensurePersonalCredentials() else {
-            NSApp.terminate(nil)
+        if let index = CommandLine.arguments.firstIndex(of: "--player-ui-smoke"), CommandLine.arguments.count > index + 1 {
+            PlayerAppSmoke.run(window: window, directory: CommandLine.arguments[index + 1])
             return
         }
+        guard ApiEnvironment.ensurePersonalCredentials() else {
+            setDefaultTheme(for: window)
+            showPlayerCredentials(for: window) { [weak self] in self?.startPersonalPlayer(aNotification) }
+            return
+        }
+        startPersonalPlayer(aNotification)
+    }
+    private func startPersonalPlayer(_ aNotification: Notification) {
 
         
         _ = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in

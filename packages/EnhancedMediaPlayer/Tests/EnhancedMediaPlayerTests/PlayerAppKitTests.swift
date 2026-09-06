@@ -66,37 +66,25 @@ final class PlayerAppKitTests: XCTestCase {
         XCTAssertTrue(player.actions.isEmpty); XCTAssertTrue(player.rateWrites.isEmpty)
         XCTAssertEqual(player.playerSnapshot.volume, 0.8)
     }
-    func testRapidSeeksCommitOnlyLatestIntent() {
+    func testRapidSeeksSubmitImmediatelyThenChaseOnlyLatestOnCompletion() {
         let player = MockPlayer(); let input = controller(player)
-        for _ in 0..<4 { input.perform(.seekForward) }
-        let done = expectation(description: "coalesced seek")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { done.fulfill() }
-        wait(for: [done], timeout: 1)
-        XCTAssertEqual(player.seeks, [120])
+        input.perform(.seekForward)
+        XCTAssertEqual(player.seeks, [105])
+        for _ in 0..<3 { input.perform(.seekForward) }
+        XCTAssertEqual(player.seeks, [105])
+        input.observe(position: 105, generation: 1, buffering: true)
+        XCTAssertEqual(player.seeks, [105])
+        input.observe(position: 105, generation: 1, buffering: false)
+        XCTAssertEqual(player.seeks, [105, 120])
+        input.deactivate()
     }
-    func testDirectScrubCancelsOutstandingKeyboardSeek() {
+    func testDeactivationDropsPendingButDoesNotPretendToUndoIssuedSeek() {
         let player = MockPlayer(); let input = controller(player)
-        input.perform(.seekForward); input.cancelPendingSeek()
-        let done = expectation(description: "cancelled seek")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { done.fulfill() }
-        wait(for: [done], timeout: 1); XCTAssertTrue(player.seeks.isEmpty)
-    }
-    func testSettingsWindowLaysOutAndRenders() throws {
-        let controller = PlayerSettingsWindow(store: PlayerSettingsStore(defaults: defaults))
-        let window = try XCTUnwrap(controller.window)
-        let view = try XCTUnwrap(window.contentView)
-        window.setContentSize(NSSize(width: 750, height: 660))
-        view.layoutSubtreeIfNeeded()
-        XCTAssertEqual(window.title, playerText("播放器设置", "Playback Settings"))
-        XCTAssertFalse(view.hasAmbiguousLayout)
-        if let path = ProcessInfo.processInfo.environment["PLAYER_UI_SNAPSHOT_DIR"] {
-            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-            if let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                view.cacheDisplay(in: view.bounds, to: image)
-                try image.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path).appendingPathComponent("playback-settings.png"))
-            }
-        }
-        window.close()
+        input.perform(.seekForward); input.perform(.seekForward)
+        input.cancelPendingSeek()
+        input.observe(position: 105, generation: 1, buffering: false)
+        XCTAssertEqual(player.seeks, [105])
+        XCTAssertNil(input.pendingSeekPosition)
     }
 }
 #endif

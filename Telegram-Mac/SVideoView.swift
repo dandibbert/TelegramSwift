@@ -1204,6 +1204,7 @@ private final class PreviewView : View {
 class SVideoView: NSView {
     var enhancedAction: ((PlayerAction) -> Void)?
     var enhancedIsFloating: (() -> Bool)?
+    var enhancedIsPinned: (() -> Bool)?
     var enhancedMenuOpened: (() -> Void)?
 
     var enhancedPlaybackControlsAllowed: Bool { adMessageView == nil }
@@ -1233,6 +1234,7 @@ class SVideoView: NSView {
         }
         needsLayout = true
     }
+    func enhancedMakeMenu() -> ContextMenu? { controls.menuItems.contextMenu?() }
     override func rightMouseDown(with event: NSEvent) {
         if enhancedIsFloating?() == true, let menu = controls.menuItems.contextMenu?() {
             AppMenu.show(menu: menu, event: event, for: self)
@@ -1741,11 +1743,21 @@ class SVideoView: NSView {
             
             menu.addItem(ContextSeparatorItem())
             for action in [PlayerAction.detach, .pictureInPicture, .pin, .settings] {
-                let key = PlayerSettingsStore.shared.preferences.shortcuts[action.rawValue]?.display ?? ""
-                menu.addItem(ContextMenuItem(action.title + (key.isEmpty ? "" : "    " + key), handler: { [weak self] in
-                    // Let the menu finish closing before routing a playback command.
+                let titles: [PlayerAction: String] = [.detach: playerText("独立播放器", "Detached player"),
+                    .pictureInPicture: playerText("画中画", "Picture in picture"), .pin: playerText("窗口置顶", "Keep on top"),
+                    .settings: playerText("播放器设置", "Playback settings")]
+                let shortcut = PlayerSettingsStore.shared.preferences.shortcuts[action.rawValue]
+                let checked = action == .pin && self?.enhancedIsPinned?() == true
+                let item = ContextMenuItem(titles[action] ?? action.title, handler: { [weak self, weak menu] in
+                    // Menu commands are explicit actions, not keyboard events:
+                    // do not reject them merely because their popup is fading.
+                    menu?.cancelTracking()
+                    AppMenu.closeAll()
+                    self?.isInMenu = false
                     DispatchQueue.main.async { self?.enhancedAction?(action) }
-                }))
+                }, state: checked ? .on : nil)
+                if !nativeMenu { item.keyEquivalent = shortcut?.display ?? "" }
+                menu.addItem(item)
             }
             menu.appearance = darkPalette.appearance
             return menu

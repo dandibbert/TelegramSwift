@@ -120,6 +120,25 @@ package_app() {
   local exe
   exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
   lipo -info "$app/Contents/MacOS/$exe" | tee build/logs/architectures.log
+  # Exercise the actual built app's native settings, real player view/HUD and
+  # menu callbacks, not a lookalike SwiftPM settings window. No account needed.
+  mkdir -p build/logs/player-ui
+  python3 - "$app/Contents/MacOS/$exe" "$PWD/build/logs/player-ui" <<'SMOKE'
+import json, pathlib, subprocess, sys
+with open('build/logs/player-ui-smoke.log', 'w') as log:
+    try:
+        result = subprocess.run([sys.argv[1], '--player-ui-smoke', sys.argv[2]],
+                                stdout=log, stderr=subprocess.STDOUT, timeout=90)
+    except subprocess.TimeoutExpired:
+        raise SystemExit('Production player UI smoke test timed out')
+if result.returncode != 0:
+    print(pathlib.Path('build/logs/player-ui-smoke.log').read_text())
+    raise SystemExit(result.returncode or 1)
+report = json.loads((pathlib.Path(sys.argv[2]) / 'result.json').read_text())
+assert report['passed'] is True and len(report['checks']) >= 10
+assert len(report['snapshots']) >= 6
+print('Production player UI smoke checks:', len(report['checks']))
+SMOKE
   # This is a no-credentials launch smoke test, not a logged-in playback test.
   "$app/Contents/MacOS/$exe" > build/logs/launch.log 2>&1 &
   local pid=$!
@@ -140,7 +159,7 @@ Architectures: $(lipo -archs "$app/Contents/MacOS/$exe")
 Xcode: $(xcodebuild -version | tr '\n' ' ')
 Signing: ad-hoc personal build, not notarized
 Credentials: first-launch dialog; API hash stays in the local Keychain
-Validation: codesign verification and eight-second launch smoke test
+Validation: production TGUIKit settings/player-view/menu smoke, codesign verification and eight-second launch smoke test
 Not validated: account login or real MP4/HLS playback
 INFO
   ditto -c -k --sequesterRsrc --keepParent "$app" build/Telegram-Player-macOS.zip

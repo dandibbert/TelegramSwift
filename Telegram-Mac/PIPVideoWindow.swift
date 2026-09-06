@@ -42,7 +42,8 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
     private let messageDisposable = MetaDisposable()
     private var saveWork: DispatchWorkItem?
     private var isChangingWindow = false
-    private var pinned: Bool
+    private var lastPreferences: PlayerPreferences
+    private(set) var pinned: Bool
     var isFullscreen: Bool { window?.styleMask.contains(.fullScreen) == true }
 
     init(control: SVideoController, item: MGalleryItem, viewer: GalleryViewer, origin: NSPoint,
@@ -51,6 +52,7 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         self.contentDelegate = delegate; self.interactions = interactions; self.type = type; self.sourceOrigin = origin
         self.presentation = control.enhancedInitialPresentation
         let p = PlayerSettingsStore.shared.preferences
+        self.lastPreferences = p
         self.pinned = presentation == .mini ? p.miniOnTop : p.detachedOnTop
         super.init()
     }
@@ -59,7 +61,10 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         settingsObserver = NotificationCenter.default.addObserver(forName: PlayerSettingsStore.didChange, object: nil, queue: .main) { [weak self] _ in
             guard let self = self else { return }
             let p = PlayerSettingsStore.shared.preferences
-            self.pinned = self.presentation == .mini ? p.miniOnTop : p.detachedOnTop
+            if self.presentation == .mini ? p.miniOnTop != self.lastPreferences.miniOnTop : p.detachedOnTop != self.lastPreferences.detachedOnTop {
+                self.pinned = self.presentation == .mini ? p.miniOnTop : p.detachedOnTop
+            }
+            self.lastPreferences = p
             self.applyWindowPolicy()
         }
         screensObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.keepOnScreen() }
@@ -99,7 +104,10 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         } else {
             let player = Window(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             player.name = "enhanced-video-player"
-            player.title = playerText("独立播放器 · Telegram Player", "Video · Telegram Player")
+            player.title = playerText("视频", "Video")
+            player.titleVisibility = .hidden
+            player.titlebarAppearsTransparent = true
+            player.styleMask.insert(.fullSizeContentView)
             next = player
         }
         next.isReleasedWhenClosed = false
@@ -112,7 +120,7 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         next.contentMinSize = NSSize(width: max(160, 100 * ratio), height: max(100, 160 / ratio))
         next.delegate = self
         if #available(macOS 10.14, *) { next.appearance = NSAppearance(named: .darkAqua) }
-        let root = NSView(frame: NSRect(origin: .zero, size: size))
+        let root = View(frame: NSRect(origin: .zero, size: size))
         root.wantsLayer = true; root.layer?.backgroundColor = NSColor.black.cgColor
         if presentation == .mini { root.layer?.cornerRadius = 10; root.layer?.masksToBounds = true }
         next.contentView = root
@@ -250,7 +258,7 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         else if abs(frame.maxX - visible.maxX) < 32 { frame.origin.x = visible.maxX - frame.width - 12 }
         if abs(frame.minY - visible.minY) < 32 { frame.origin.y = visible.minY + 12 }
         else if abs(frame.maxY - visible.maxY) < 32 { frame.origin.y = visible.maxY - frame.height - 12 }
-        window.setFrame(frame, display: true, animate: true)
+        if frame != window.frame { window.setFrame(frame, display: true, animate: true) }
         saveFrame()
     }
     deinit {
@@ -264,6 +272,7 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
 
 private var floatingVideoSession: FloatingVideoSession?
 var hasPictureInPicture: Bool { floatingVideoSession != nil }
+var enhancedFloatingIsPinned: Bool { floatingVideoSession?.pinned == true }
 var enhancedFloatingIsFullscreen: Bool { floatingVideoSession?.isFullscreen == true }
 func showPipVideo(control: PictureInPictureControl, viewer: GalleryViewer, item: MGalleryItem, origin: NSPoint,
                   delegate: InteractionContentViewProtocol? = nil, contentInteractions: ChatMediaLayoutParameters? = nil, type: GalleryAppearType) {

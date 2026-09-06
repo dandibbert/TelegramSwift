@@ -41,62 +41,31 @@ public final class ApiEnvironment {
         }
     }
 
-    // Called on the main thread before creating any Telegram network/account objects.
-    // No API hash is ever written to UserDefaults, a build log, or the repository.
-    public static func ensurePersonalCredentials() -> Bool {
+    /// Credential storage is UI-independent; the application presents its native
+    /// Telegram form before creating network/account objects.
+    public static func ensurePersonalCredentials() -> Bool { credentials != nil }
+    public static func storePersonalCredentials(id: String, hash: String) -> String? {
         precondition(Thread.isMainThread)
-        if credentials != nil { return true }
         let zh = (Locale.preferredLanguages.first ?? "en").hasPrefix("zh")
-        let alert = NSAlert()
-        alert.messageText = zh ? "配置你的 Telegram API" : "Your Telegram API application"
-        alert.informativeText = zh
-            ? "填写你已申请的 API ID 和 API Hash。它们仅保存在这台 Mac 的钥匙串中，不会上传到 GitHub。这不是 Bot Token，也不需要提供给任何人。"
-            : "Enter your API ID and API Hash. They are stored only in this Mac's Keychain, never in GitHub. These are not a bot token."
-        alert.addButton(withTitle: zh ? "保存并继续" : "Save and Continue")
-        alert.addButton(withTitle: zh ? "退出" : "Quit")
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 146))
-        let idLabel = NSTextField(labelWithString: "API ID")
-        idLabel.frame = NSRect(x: 0, y: 116, width: 90, height: 20)
-        let idField = NSTextField(frame: NSRect(x: 94, y: 112, width: 306, height: 26))
-        idField.placeholderString = "12345678"
-        let hashLabel = NSTextField(labelWithString: "API Hash")
-        hashLabel.frame = NSRect(x: 0, y: 77, width: 90, height: 20)
-        let hashField = NSSecureTextField(frame: NSRect(x: 94, y: 72, width: 306, height: 26))
-        hashField.placeholderString = zh ? "32 位十六进制字符串" : "32 hexadecimal characters"
-        let errorLabel = NSTextField(wrappingLabelWithString: "")
-        errorLabel.frame = NSRect(x: 0, y: 0, width: 400, height: 58)
-        errorLabel.font = .systemFont(ofSize: 11)
-        errorLabel.textColor = .systemRed
-        [idLabel, idField, hashLabel, hashField, errorLabel].forEach { container.addSubview($0) }
-        alert.accessoryView = container
-        alert.window.initialFirstResponder = idField
-        NSApp.activate(ignoringOtherApps: true)
-        while alert.runModal() == .alertFirstButtonReturn {
-            let id = Int32(idField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-            let hash = hashField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard validCredentials(id: id, hash: hash) else {
-                errorLabel.stringValue = zh ? "请检查 API ID（正整数）和 API Hash（32 位十六进制）。" : "Use a positive API ID and a 32-character hexadecimal API Hash."
-                continue
-            }
-            let value = Credentials(id: id, hash: hash)
-            guard let data = try? JSONEncoder().encode(value) else { return false }
-            var status = SecItemUpdate(keychainQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-            if status == errSecItemNotFound {
-                var query = keychainQuery
-                query[kSecValueData as String] = data
-                query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                status = SecItemAdd(query as CFDictionary, nil)
-            }
-            guard status == errSecSuccess else {
-                errorLabel.stringValue = zh ? "无法写入钥匙串（\(status)）。请先解锁登录钥匙串后重试。" : "Keychain error \(status). Unlock your login keychain and try again."
-                continue
-            }
-            cachedCredentials = value
-            hashField.stringValue = ""
-            return true
+        let parsedId = Int32(id.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        let parsedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard validCredentials(id: parsedId, hash: parsedHash) else {
+            return zh ? "请检查 API ID（正整数）和 API Hash（32 位十六进制）。" : "Use a positive API ID and a 32-character hexadecimal API Hash."
         }
-        hashField.stringValue = ""
-        return false
+        let value = Credentials(id: parsedId, hash: parsedHash)
+        guard let data = try? JSONEncoder().encode(value) else { return "Unable to encode credentials." }
+        var status = SecItemUpdate(keychainQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var query = keychainQuery
+            query[kSecValueData as String] = data
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(query as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            return zh ? "无法写入钥匙串（\(status)）。请先解锁登录钥匙串后重试。" : "Keychain error \(status). Unlock your login keychain and try again."
+        }
+        cachedCredentials = value
+        return nil
     }
 
     public static var containerURL: URL? {

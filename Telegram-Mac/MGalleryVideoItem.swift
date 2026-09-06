@@ -20,6 +20,7 @@ import TelegramMedia
 class MGalleryVideoItem: MGalleryItem {
     var startTime: TimeInterval = 0
     private var playAfter:Bool = false
+    private var didApplyInitialPresentation = false
     private let controller: SVideoController
     var playerState: Signal<AVPlayerState, NoError> {
         return controller.status |> map { value in
@@ -90,6 +91,19 @@ class MGalleryVideoItem: MGalleryItem {
         }
         controller.viewDidAppear(false)
         self.startTime = 0
+
+        if !didApplyInitialPresentation {
+            didApplyInitialPresentation = true
+            let preferences = PlayerSettingsStore.shared.preferences
+            if preferences.enabled && preferences.defaultPresentation != .gallery {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, getGalleryViewer()?.enhancedIsSelectedVideo(self) == true,
+                          self.controller.enhancedPresentation == .gallery else { return }
+                    self.controller.enhancedInitialPresentation = preferences.defaultPresentation
+                    self.controller.togglePictureInPicture()
+                }
+            }
+        }
         
         
         updateMagnifyDisposable.set((magnify.get() |> deliverOnMainQueue).start(next: { [weak self] value in

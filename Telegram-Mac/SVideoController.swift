@@ -39,6 +39,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
     private(set) var enhancedPresentation: PlayerPresentation = .gallery
     var enhancedInitialPresentation: PlayerPresentation = .mini
     var enhancedResumeOnGallery: Bool?
+    private var enhancedRawStatus: MediaPlayerStatus?
     private var enhancedCurrentRate: Double = 1
     private var enhancedSettingsObserver: NSObjectProtocol?
 
@@ -428,6 +429,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         mediaPlayer.setBaseRate(enhancedCurrentRate)
         genericView.enhancedAction = { [weak self] action in self?.enhancedInput?.perform(action) }
         genericView.enhancedIsFloating = { [weak self] in (self?.enhancedPresentation ?? .gallery) != .gallery }
+        genericView.enhancedIsPinned = { enhancedFloatingIsPinned }
         genericView.enhancedMenuOpened = { [weak self] in self?.enhancedInput?.endTemporarySpeed() }
         genericView.enhancedRefreshSeekButtons()
         enhancedSettingsObserver = NotificationCenter.default.addObserver(forName: PlayerSettingsStore.didChange,
@@ -513,8 +515,15 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
             }
             _ = statusValue.swap(status)
            
-            self?.genericView.status = status
-            self?.enhancedInput?.observe(position: status.timestamp)
+            self?.enhancedRawStatus = status
+            let buffering: Bool
+            if case .buffering = status.status { buffering = true } else { buffering = false }
+            self?.enhancedInput?.observe(position: status.timestamp, generation: status.seekId, buffering: buffering)
+            if let target = self?.enhancedInput?.pendingSeekPosition {
+                self?.playerPreviewSeek(to: target)
+            } else {
+                self?.genericView.status = status
+            }
             switch status.status {
             case .playing: self?.isPaused = false
             case .paused: self?.isPaused = true
@@ -549,8 +558,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         genericView.interactions = SVideoInteractions(playOrPause: { [weak self] in
             self?.playOrPause()
         }, rewind: { [weak self] timestamp in
-            self?.enhancedInput?.cancelPendingSeek()
-            self?.mediaPlayer.seek(timestamp)
+            self?.enhancedInput?.seek(to: timestamp)
         }, scrobbling: { [weak self] timecode in
             guard let `self` = self else { return }
 
@@ -766,13 +774,28 @@ extension SVideoController: PlayerCommandTarget {
     var playerView: NSView { genericView }
     var playerPresentation: PlayerPresentation { enhancedPresentation }
     var playerInputAllowed: Bool {
-        return !isControlsLimited && genericView.enhancedPlaybackControlsAllowed && !genericView.isInMenu && !contextMenuOnScreen()
+        return !isControlsLimited && genericView.enhancedPlaybackControlsAllowed
+    }
+    var playerKeyboardAllowed: Bool {
+        return playerInputAllowed && !genericView.isInMenu && !contextMenuOnScreen()
+            && !((view.window as? Window).map { hasModals($0) } ?? false)
     }
     var playerSnapshot: PlayerSnapshot {
-        let status = genericView.status
-        return PlayerSnapshot(position: status?.timestamp ?? 0, duration: status?.duration ?? 0,
-                              volume: Double(status?.volume ?? FastSettings.volumeRate),
-                              rate: enhancedCurrentRate, playing: !isPaused)
+        let status = enhancedRawStatus ?? genericView.status
+        var position = status?.timestamp ?? 0
+        if let status = status, case .playing = status.status, status.generationTimestamp > 0 {
+            position += max(0, CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
+            position = min(position, status.duration)
+        }
+        return PlayerSnapshot(position: position, duration: status?.duration ?? 0,
+                              volume: Double(genericView.status?.volume ?? FastSettings.volumeRate),
+                              rate: enhancedCurrentRate, playing: !isPaused, seekGeneration: status?.seekId ?? 0)
+    }
+    func playerPreviewSeek(to timestamp: Double) {
+        guard let status = enhancedRawStatus ?? genericView.status else { return }
+        genericView.status = MediaPlayerStatus(generationTimestamp: 0, duration: status.duration,
+            dimensions: status.dimensions, timestamp: timestamp, baseRate: enhancedCurrentRate,
+            volume: status.volume, seekId: status.seekId, status: status.status)
     }
     func playerSeek(to timestamp: Double) {
         guard playerInputAllowed, timestamp.isFinite else { return }
@@ -838,7 +861,7 @@ extension SVideoController: PlayerCommandTarget {
             if isFullscreen { toggleFullScreen() }
             else if enhancedPresentation != .gallery { exitPictureInPicture() }
             else { closeGalleryViewer(true) }
-        case .settings: PlayerSettingsWindow.show()
+        case .settings: showPlayerSettings(for: (view.window as? Window) ?? context.window)
         default: break
         }
     }

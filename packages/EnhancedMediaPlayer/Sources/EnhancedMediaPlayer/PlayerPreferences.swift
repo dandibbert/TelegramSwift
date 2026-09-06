@@ -91,7 +91,7 @@ public struct PlayerShortcut: Codable, Equatable, Hashable {
 
 public enum PlayerScrollAction: String, Codable, CaseIterable { case volume, seek, none }
 public enum PlayerDoubleClick: String, Codable, CaseIterable { case fullscreen, playPause, regionalSeek, none }
-public enum PlayerPresentation: String { case gallery, detached, mini }
+public enum PlayerPresentation: String, Codable, CaseIterable { case gallery, detached, mini }
 
 public struct PlayerPreferences: Codable, Equatable {
     public var enabled = true
@@ -105,6 +105,7 @@ public struct PlayerPreferences: Codable, Equatable {
     public var showOSD = true
     public var scrollAction = PlayerScrollAction.volume
     public var doubleClick = PlayerDoubleClick.fullscreen
+    public var defaultPresentation = PlayerPresentation.gallery
     public var rememberWindow = true
     public var detachedOnTop = false
     public var miniOnTop = true
@@ -234,4 +235,66 @@ public func playerTimestamp(_ seconds: Double) -> String {
     let value = Int(seconds)
     return value >= 3600 ? String(format: "%d:%02d:%02d", value / 3600, (value / 60) % 60, value % 60)
         : String(format: "%d:%02d", value / 60, value % 60)
+}
+
+
+/// One outstanding decoder seek, plus the latest user intent. A buffering status
+/// often already contains the requested timestamp; it is NOT a seek completion.
+/// First input is submitted immediately. Repeats update the HUD/target only until
+/// a new seek generation has produced playable/paused media at the target.
+public struct PlayerSeekPipeline {
+    public private(set) var target: Double?
+    private struct Flight {
+        var target: Double
+        var generation: Int
+        var started: TimeInterval
+        var tolerance: Double
+    }
+    private var flight: Flight?
+    private var lastInput: TimeInterval = 0
+    public init() {}
+    public var isSeeking: Bool { flight != nil }
+    public var hasQueuedTarget: Bool {
+        guard let flight = flight, let target = target else { return false }
+        return abs(target - flight.target) > 0.000001
+    }
+    public mutating func request(delta: Double, position: Double, duration: Double, generation: Int, now: TimeInterval) -> Double? {
+        guard delta.isFinite else { return nil }
+        return request(to: (target ?? position) + delta, position: position, duration: duration, generation: generation, now: now)
+    }
+    public mutating func request(to destination: Double, position: Double, duration: Double, generation: Int, now: TimeInterval) -> Double? {
+        guard destination.isFinite, position.isFinite, duration.isFinite, duration > 0, now.isFinite else { return nil }
+        let value = min(duration, max(0, destination))
+        if target == nil && abs(value - position) < 0.000001 { return nil }
+        target = value
+        lastInput = now
+        if flight == nil { return submit(position: position, generation: generation, now: now) }
+        return nil
+    }
+    private mutating func submit(position: Double, generation: Int, now: TimeInterval) -> Double? {
+        guard let value = target else { return nil }
+        let tolerance = min(0.35, max(0.000001, abs(value - position) * 0.5))
+        flight = Flight(target: value, generation: generation, started: now, tolerance: tolerance)
+        return value
+    }
+    public mutating func observe(position: Double, generation: Int, buffering: Bool, now: TimeInterval) -> Double? {
+        guard position.isFinite, let active = flight, !buffering,
+              generation != active.generation, abs(position - active.target) < active.tolerance else { return nil }
+        flight = nil
+        if let value = target, abs(value - active.target) > 0.000001 {
+            return submit(position: position, generation: generation, now: now)
+        }
+        target = nil
+        return nil
+    }
+    /// A network seek can wait indefinitely on an obsolete segment. Supersede it
+    /// only after 750 ms AND a 150 ms quiet period, never every keyboard repeat.
+    /// This is not a repeating retry of an unchanged target.
+    public mutating func advanceStalled(position: Double, generation: Int, now: TimeInterval) -> Double? {
+        guard let active = flight, let value = target,
+              abs(value - active.target) > 0.000001,
+              now - active.started >= 0.75, now - lastInput >= 0.15 else { return nil }
+        return submit(position: position, generation: generation, now: now)
+    }
+    public mutating func reset() { self = Self() }
 }

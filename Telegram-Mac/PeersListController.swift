@@ -2883,7 +2883,10 @@ class PeersListController: TelegramGenericViewController<PeerListContainerView>,
                     break
                 }
                 return
-            } else if let peer = state.forumPeer?.peer, peer.displayForumAsTabs, peer.isForum {
+            } else if let peer = state.forumPeer?.peer, peer.displayForumAsTabs, peer.isForum, peer is TelegramChannel {
+                // This back-navigation is only for channels switching to the
+                // integrated forum-tabs presentation. Bot forums are user peers
+                // and must keep their topic-list controller selected.
                 switch self.mode {
                 case .forum:
                     self.navigationController?.back()

@@ -2013,6 +2013,17 @@ private final class ChatAdData {
     }
 }
 
+// A bot can be discovered as forum-capable after its chat controller is already
+// onscreen. Channel forum-mode changes still rebuild navigation, but a user/bot
+// capability upgrade must preserve the current chat/thread selection.
+func shouldRemoveChatForForumTransition(becameForum: Bool, isUserCapabilityUpgrade: Bool,
+                                        lostThreadInfo: Bool, displayForumAsTabs: Bool,
+                                        isMonoForum: Bool) -> Bool {
+    guard !isMonoForum else { return false }
+    if becameForum && !isUserCapabilityUpgrade { return true }
+    return lostThreadInfo && !displayForumAsTabs
+}
+
 class ChatController: EditableViewController<ChatControllerView>, Notifable, TableViewDelegate {
     
     var chatLocation: ChatLocation {
@@ -10056,7 +10067,15 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
             }
             
             if let peer = value.mainPeer, let oldPeer = oldValue.mainPeer {
-                if peer.isForum && !oldPeer.isForum || (oldValue.threadInfo != nil && value.threadInfo == nil && !peer.displayForumAsTabs), !peer.isMonoForum {
+                let becameForum = peer.isForum && !oldPeer.isForum
+                let userCapabilityUpgrade = becameForum && peer is TelegramUser && oldPeer is TelegramUser
+                if shouldRemoveChatForForumTransition(
+                    becameForum: becameForum,
+                    isUserCapabilityUpgrade: userCapabilityUpgrade,
+                    lostThreadInfo: oldValue.threadInfo != nil && value.threadInfo == nil,
+                    displayForumAsTabs: peer.displayForumAsTabs,
+                    isMonoForum: peer.isMonoForum
+                ) {
                     self.navigationController?.removeImmediately(self)
                 }
             }

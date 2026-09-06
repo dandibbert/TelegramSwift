@@ -82,6 +82,12 @@ enum PlayerAppSmoke {
             do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
             catch { fail("Cannot create smoke output") }
             setDefaultTheme(for: window)
+            check(!shouldRemoveChatForForumTransition(becameForum: true, isUserCapabilityUpgrade: true, lostThreadInfo: false, displayForumAsTabs: true, isMonoForum: false),
+                  "Bot forum capability discovery preserves the current chat controller")
+            check(shouldRemoveChatForForumTransition(becameForum: true, isUserCapabilityUpgrade: false, lostThreadInfo: false, displayForumAsTabs: false, isMonoForum: false),
+                  "Channel forum-mode conversion keeps the original navigation rebuild")
+            check(!shouldRemoveChatForForumTransition(becameForum: false, isUserCapabilityUpgrade: false, lostThreadInfo: true, displayForumAsTabs: true, isMonoForum: false),
+                  "Integrated forum tabs do not discard a selected thread during refresh")
             window.setContentSize(NSSize(width: 600, height: 680))
             window.makeKeyAndOrderFront(nil)
             showPage(.controls, name: "controls") {

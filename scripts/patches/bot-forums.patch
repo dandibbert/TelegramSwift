@@ -560,7 +560,7 @@ index a4414d7..19943cd 100644
 +/// a bot name or local preference is not. This never fabricates create rights.
 +public func refreshBotForumCapability(account: Account, peerId: PeerId) -> Signal<Void, NoError> {
 +    return account.postbox.transaction { transaction -> Api.InputPeer? in
-+        guard let user = transaction.getPeer(peerId) as? TelegramUser, user.botInfo != nil else { return nil }
++        guard let user = transaction.getPeer(peerId) as? TelegramUser, let bot = user.botInfo, !bot.flags.contains(.hasForum) else { return nil }
 +        return apiInputPeer(user)
 +    } |> mapToSignal { input -> Signal<Void, NoError> in
 +        guard let input = input else { return .complete() }

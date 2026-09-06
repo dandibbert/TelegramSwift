@@ -202,12 +202,17 @@ public struct PlayerSeekAccumulator {
     public private(set) var target: Double?
     private var lastInput: TimeInterval = -.infinity
     private var hasUncommittedTarget = false
+    private var landingTolerance: Double = 0.35
     public init() {}
     public mutating func add(_ delta: Double, position: Double, duration: Double, now: TimeInterval) -> Double? {
         guard delta.isFinite, position.isFinite, duration.isFinite, duration > 0, now.isFinite else { return nil }
         let base = now - lastInput <= 3 ? (target ?? position) : position
         let next = min(duration, max(0, base + delta))
         target = next
+        // Never acknowledge a fractional seek using an unchanged timestamp or
+        // the previous seek's landing. A fixed 350 ms tolerance swallows the
+        // supported 100 ms step before the backend has moved at all.
+        landingTolerance = min(0.35, max(0.000001, min(abs(delta), abs(next - position)) * 0.5))
         lastInput = now
         hasUncommittedTarget = true
         return next
@@ -219,7 +224,7 @@ public struct PlayerSeekAccumulator {
     }
     public mutating func observe(position: Double, now: TimeInterval) {
         guard !hasUncommittedTarget, let target = target else { return }
-        if abs(position - target) < 0.35 || now - lastInput > 3 { self.target = nil }
+        if abs(position - target) < landingTolerance || now - lastInput > 3 { self.target = nil }
     }
     public mutating func reset() { self = Self() }
 }

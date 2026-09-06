@@ -470,6 +470,9 @@ class GalleryViewer: NSResponder {
     
     
     @objc open func windowDidResignKey() {
+        // Enhanced video controls may open a settings window or hand focus to
+        // another app. Do not immediately steal it back from the user's target.
+        if PlayerSettingsStore.shared.preferences.enabled, pager.selectedItem is MGalleryVideoItem { return }
         self.window.makeKeyAndOrderFront(self)
       //  window.makeFirstResponder(self)
     }
@@ -1650,7 +1653,14 @@ class GalleryViewer: NSResponder {
         
     }
     
+    func enhancedIsSelectedVideo(_ item: MGalleryVideoItem) -> Bool { pager.selectedItem === item }
+
+    func enhancedNavigate(forward: Bool) {
+        if forward { pager.next() } else { pager.prev() }
+    }
+
     func close(_ animated:Bool = false) -> Void {
+        (pager.selectedItem as? MGalleryVideoItem)?.enhancedGalleryWillClose()
         disposable.dispose()
         readyDispose.dispose()
         didSetReady = false

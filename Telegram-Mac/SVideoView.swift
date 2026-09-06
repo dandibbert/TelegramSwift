@@ -793,8 +793,8 @@ private final class SVideoControlsView : Control {
         rewindForward.isHidden = rewindForward.isHidden || frame.width < 450
         rewindBackward.isHidden = rewindBackward.isHidden || frame.width < 450
 
-        rewindForward.isEnabled = status.duration > 30 && !status.generationTimestamp.isZero
-        rewindBackward.isEnabled = status.duration > 30 && !status.generationTimestamp.isZero
+        rewindForward.isEnabled = status.duration > 0
+        rewindBackward.isEnabled = status.duration > 0
         rewindForward.layer?.opacity = rewindForward.isEnabled ? 1.0 : 0.3
         rewindBackward.layer?.opacity = rewindForward.isEnabled ? 1.0 : 0.3
         
@@ -1041,7 +1041,7 @@ private final class SVideoControlsView : Control {
         if let mediaPlayer, let quality = mediaPlayer.videoQualityState(), !quality.available.isEmpty {
             image = selectBestQualityIcon(for: quality.preferred).precomposed(.white)
         } else {
-            image = optionsRateImage(rate: String(format: "%.1fx", FastSettings.playingVideoRate), color: .white, isLarge: true)
+            image = optionsRateImage(rate: String(format: "%.1fx", status?.baseRate ?? FastSettings.playingVideoRate), color: .white, isLarge: true)
         }
         menuItems.set(image: image, for: .Normal)
         self.menuItems.sizeToFit()
@@ -1202,6 +1202,62 @@ private final class PreviewView : View {
 
 
 class SVideoView: NSView {
+    var enhancedAction: ((PlayerAction) -> Void)?
+    var enhancedIsFloating: (() -> Bool)?
+    var enhancedIsPinned: (() -> Bool)?
+    var enhancedMenuOpened: (() -> Void)?
+
+    var enhancedPlaybackControlsAllowed: Bool { adMessageView == nil }
+
+    private var enhancedActiveSliders: [LinearProgressControl] {
+        if let pip = pipControls { return [pip.progress, pip.volumeSlider] }
+        return [controls.progress, controls.volumeSlider]
+    }
+    var enhancedControlDragInProgress: Bool {
+        return enhancedActiveSliders.contains { $0.hasTemporaryState }
+    }
+    // A Window-level mouse-up handler runs before normal AppKit dispatch.
+    // Only finish an explicitly captured control, then consume the event
+    // so AppKit cannot deliver that same release to the slider a second time.
+    @discardableResult
+    func enhancedFinishControlDrag(with event: NSEvent) -> Bool {
+        guard let slider = enhancedActiveSliders.first(where: { $0.hasTemporaryState }) else { return false }
+        slider.mouseUp(with: event)
+        return true
+    }
+    func enhancedCanHandleMouse(at point: NSPoint) -> Bool {
+        if enhancedControlDragInProgress { return false }
+        if let adMessageView, !adMessageView.isHidden, adMessageView.frame.contains(point) { return false }
+        if let pip = pipControls, !pip.isHidden {
+            let controls: [NSView] = [pip.playOrPause, pip.progress, pip.volumeContainer, pip.close, pip.fullscreen]
+            if controls.contains(where: { !$0.isHiddenOrHasHiddenAncestor && $0.bounds.contains($0.convert(point, from: self)) }) { return false }
+        } else if !controls.isHidden && controls.frame.contains(point) { return false }
+        return true
+    }
+    func enhancedRefreshSeekButtons() {
+        let step = PlayerSettingsStore.shared.preferences.seekStep
+        for (button, prefix) in [(controls.rewindBackward, "−"), (controls.rewindForward, "+")] {
+            let title = prefix + String(format: "%.3g", step) + "s"
+            let image = NSImage(size: NSSize(width: 44, height: 26), flipped: false) { rect in
+                let style = NSMutableParagraphStyle(); style.alignment = .center
+                (title as NSString).draw(in: rect.insetBy(dx: 0, dy: 4), withAttributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                    .foregroundColor: NSColor.white, .paragraphStyle: style])
+                return true
+            }
+            button.set(image: image.precomposed(), for: .Normal)
+            button.toolTip = title
+            _ = button.sizeToFit()
+        }
+        needsLayout = true
+    }
+    func enhancedMakeMenu() -> ContextMenu? { controls.menuItems.contextMenu?() }
+    override func rightMouseDown(with event: NSEvent) {
+        if enhancedIsFloating?() == true, let menu = controls.menuItems.contextMenu?() {
+            AppMenu.show(menu: menu, event: event, for: self)
+        } else { super.rightMouseDown(with: event) }
+    }
+
     
     var initialedSize: NSSize = NSZeroSize
     
@@ -1232,6 +1288,8 @@ class SVideoView: NSView {
     
     var isStreamable: Bool = true
     
+    private var enhancedLayoutReady = false
+    private var enhancedLayingOut = false
     private var previewView: PreviewView?
     private var overlayPreview: ImageView?
     
@@ -1362,6 +1420,9 @@ class SVideoView: NSView {
     }
     
     func updateLayout(size: NSSize, transition: ContainedViewLayoutTransition) {
+        guard !enhancedLayingOut, size.width > 0, size.height > 0 else { return }
+        enhancedLayingOut = true
+        defer { enhancedLayingOut = false }
         let oldSize = mediaPlayer.frame.size
         transition.updateFrame(view: mediaPlayer, frame: NSRect(origin: .zero, size: size))
         mediaPlayer.updateLayout(size: size, transition: transition)
@@ -1514,9 +1575,14 @@ class SVideoView: NSView {
         if initialedSize == NSZeroSize {
             self.initialedSize = newSize
         }
+        // This NSView is frame-based, unlike TGUIKit.View. AppKit's autoresize
+        // changes its frame but does not guarantee a layout() callback. Update
+        // the actual backend/video layer now, including during live resize.
+        if enhancedLayoutReady { updateLayout(size: bounds.size, transition: .immediate) }
     }
     
     override func mouseUp(with event: NSEvent) {
+        if enhancedFinishControlDrag(with: event) { return }
         let point = self.convert(event.locationInWindow, from: nil)
         if !NSPointInRect(point, controls.frame) {
             super.mouseUp(with: event)
@@ -1532,9 +1598,7 @@ class SVideoView: NSView {
         guard let window = window else {return false}
         let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if pipControls != nil {
-            if NSPointInRect(point, bounds) {
-                return !controls.isHidden
-            }
+            return !enhancedCanHandleMouse(at: point)
         }
         if let adMessageView, NSPointInRect(point, adMessageView.frame) {
             return true
@@ -1626,17 +1690,11 @@ class SVideoView: NSView {
         }, for: .Click)
         
         controls.rewindForward.set(handler: { [weak self] _ in
-            guard let `self` = self else {return}
-            if let status = self.status {
-                self.interactions?.rewind(min(status.timestamp + 15, status.duration))
-            }
+            self?.enhancedAction?(.seekForward)
         }, for: .Click)
         
         controls.rewindBackward.set(handler: { [weak self] _ in
-            guard let `self` = self else {return}
-            if let status = self.status {
-                self.interactions?.rewind(max(status.timestamp - 15, 0))
-            }
+            self?.enhancedAction?(.seekBackward)
         }, for: .Click)
         
         controls.toggleFullscreen.set(handler: { [weak self] _ in
@@ -1653,9 +1711,14 @@ class SVideoView: NSView {
         }, for: .Click)
         
         controls.menuItems.contextMenu = { [weak self] in
-            let menu = ContextMenu(presentation: .current(darkPalette))
+            // TGUIKit's custom menu requires its own Window subclass. The mini
+            // player is a genuine NSPanel, so use an NSMenu there instead.
+            let nativeMenu = self?.window != nil && !(self?.window is Window)
+            let menu = ContextMenu(presentation: .current(darkPalette), isLegacy: nativeMenu)
+            let currentRate = self?.status?.baseRate ?? FastSettings.playingVideoRate
             
             menu.onShow = { _ in
+                self?.enhancedMenuOpened?()
                 self?.isInMenu = true
             }
             menu.onClose = {
@@ -1663,17 +1726,23 @@ class SVideoView: NSView {
             }
             menu.delegate = menu
             
-            let customItem = ContextMenuItem(String(format: "%.1fx", FastSettings.playingVideoRate), image: NSImage(cgImage: generateEmptySettingsIcon(), size: NSMakeSize(24, 24)))
+            if nativeMenu {
+                for rate in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5] {
+                    menu.addItem(ContextMenuItem(String(format: "%.3g×", rate), handler: { [weak self] in
+                        DispatchQueue.main.async { self?.interactions?.setBaseRate(rate) }
+                    }, state: abs(currentRate - rate) < 0.001 ? .on : nil))
+                }
+            } else {
+                let customItem = ContextMenuItem(String(format: "%.1fx", currentRate), image: NSImage(cgImage: generateEmptySettingsIcon(), size: NSMakeSize(24, 24)))
+                menu.addItem(SliderContextMenuItem(volume: currentRate, minValue: 0.25, maxValue: 2.5, midValue: 1, drawable: MenuAnimation.menu_speed, drawable_muted: MenuAnimation.menu_speed, { [weak self] value, _ in
+                    customItem.title = String(format: "%.1fx", value)
+                    self?.interactions?.setBaseRate(value)
+                    self?.controls.updateBaseRate()
+                }))
+                menu.addItem(customItem)
+            }
             
-            menu.addItem(SliderContextMenuItem(volume: FastSettings.playingVideoRate, minValue: 0.2, maxValue: 2.5, midValue: 1, drawable: MenuAnimation.menu_speed, drawable_muted: MenuAnimation.menu_speed, { [weak self] value, _ in
-                customItem.title = String(format: "%.1fx", value)
-                self?.interactions?.setBaseRate(value)
-                self?.controls.updateBaseRate()
-            }))
-            
-            menu.addItem(customItem)
-            
-            if FastSettings.playingVideoRate != 1.0 {
+            if currentRate != 1.0 {
                 menu.addItem(ContextSeparatorItem())
                 menu.addItem(ContextMenuItem(strings().playbackSpeedSetToDefault, handler: { [weak self] in
                     self?.interactions?.setBaseRate(1.0)
@@ -1699,6 +1768,24 @@ class SVideoView: NSView {
             }
 
             
+            menu.addItem(ContextSeparatorItem())
+            for action in [PlayerAction.detach, .pictureInPicture, .pin, .settings] {
+                let titles: [PlayerAction: String] = [.detach: playerText("独立播放器", "Detached player"),
+                    .pictureInPicture: playerText("画中画", "Picture in picture"), .pin: playerText("窗口置顶", "Keep on top"),
+                    .settings: playerText("播放器设置", "Playback settings")]
+                let shortcut = PlayerSettingsStore.shared.preferences.shortcuts[action.rawValue]
+                let checked = action == .pin && self?.enhancedIsPinned?() == true
+                let item = ContextMenuItem(titles[action] ?? action.title, handler: { [weak self, weak menu] in
+                    // Menu commands are explicit actions, not keyboard events:
+                    // do not reject them merely because their popup is fading.
+                    menu?.cancelTracking()
+                    AppMenu.closeAll()
+                    self?.isInMenu = false
+                    DispatchQueue.main.async { self?.enhancedAction?(action) }
+                }, state: checked ? .on : nil)
+                if !nativeMenu { item.keyEquivalent = shortcut?.display ?? "" }
+                menu.addItem(item)
+            }
             menu.appearance = darkPalette.appearance
             return menu
         }
@@ -1707,6 +1794,8 @@ class SVideoView: NSView {
         bufferingIndicatorValueDisposable.set(bufferingIndicatorValue.get().start(next: { [weak self] isHidden in
             self?.bufferingIndicator.isHidden = isHidden
         }))
+        enhancedLayoutReady = true
+        updateLayout(size: bounds.size, transition: .immediate)
     }
     
     deinit {
@@ -1745,7 +1834,7 @@ class SVideoView: NSView {
     }
     
     var mouseDownIncontrols: Bool {
-        return self.controls.progress.hasTemporaryState
+        return enhancedControlDragInProgress
     }
     
     private var currentPreviewState: MediaPlayerFramePreviewResult?

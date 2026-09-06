@@ -787,6 +787,18 @@ class ChatPresentationInterfaceState: Equatable {
                 })
             }
             
+            if let user = self.peer as? TelegramUser, user.botInfo?.flags.contains(.hasForum) == true,
+               self.chatLocation.threadId == nil || (self.chatLocation.threadId == 1 && user.botInfo?.flags.contains(.forumManagedByUser) == true) {
+                if user.botInfo?.flags.contains(.forumManagedByUser) == true {
+                    return .action(playerText("新话题", "New Topic"), { interaction in
+                        // Create first, then enter the returned thread. Never send
+                        // a draft to General while topic creation is pending.
+                        ForumUI.createTopic(user.id, context: interaction.context)
+                    }, right: nil, left: nil)
+                } else {
+                    return .action(playerText("请在话题栏选择会话", "Choose a conversation in the topic sidebar"), { _ in }, right: nil, left: nil)
+                }
+            }
             if let recordingState = recordingState {
                 return .recording(recordingState)
             }

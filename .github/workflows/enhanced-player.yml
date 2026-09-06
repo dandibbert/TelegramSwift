@@ -1,0 +1,199 @@
+name: Enhanced Media Player
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Application architecture
+        type: choice
+        options: [arm64, universal]
+        default: arm64
+permissions:
+  contents: read
+jobs:
+  source:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact build source for diagnostics
+        run: |
+          bash scripts/ci-build-player.sh preflight
+          git archive --format=tar.gz --output="$RUNNER_TEMP/player-source.tar.gz" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_REVISION.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-source-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/player-source.tar.gz
+            ${{ runner.temp }}/SOURCE_REVISION.txt
+          retention-days: 3
+  test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 20
+    concurrency:
+      group: player-test-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate app metadata and shell syntax
+        run: |
+          bash -n scripts/ci-build-player.sh
+          bash scripts/ci-build-player.sh preflight
+      - name: Test player engine and AppKit integration
+        env:
+          PLAYER_UI_SNAPSHOT_DIR: ${{ runner.temp }}/player-ui
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          swift test --package-path packages/EnhancedMediaPlayer 2>&1 | tee build/logs/player-tests.log
+      - name: Typecheck personal credential bootstrap
+        run: |
+          set -o pipefail
+          swift build --package-path packages/ApiCredentials 2>&1 | tee build/logs/credentials-build.log
+      - name: Upload tests and UI snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-tests-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/player-ui
+            build/logs
+          if-no-files-found: error
+          retention-days: 7
+  compatibility:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch exact core source and apply version-bound compatibility patch
+        run: |
+          git config --global url.https://github.com/.insteadOf git@github.com:
+          git submodule update --init --depth 1 -- submodules/telegram-ios
+          python3 scripts/apply-bot-forum-compat.py
+      - name: Test actual API serializers and response decoders
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          swift test --package-path packages/BotForumCompatibilityTests 2>&1 | tee build/logs/bot-forum-api-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bot-forum-compatibility-${{ github.run_number }}
+          path: build/logs
+          retention-days: 7
+  framework:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
+    uses: ./.github/workflows/player-framework-check.yml
+  build:
+    needs: [source, test, compatibility, framework]
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      PLAYER_ARCH: ${{ inputs.architecture || 'arm64' }}
+    concurrency:
+      group: player-build-v3-${{ github.ref }}-${{ inputs.architecture || 'arm64' }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned dependencies
+        run: bash scripts/ci-build-player.sh prepare
+      - name: Identify native build inputs
+        id: native-key
+        shell: bash
+        run: |
+          fingerprint=$(git ls-tree -r HEAD core-xprojects scripts/configure_frameworks.sh submodules .gitmodules | shasum -a 256 | cut -d ' ' -f1)
+          echo "key=player-native-v2-macos15-xcode16.4-$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Restore completed native outputs
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: core-xprojects/**/build
+          key: ${{ steps.native-key.outputs.key }}
+      - name: Build native media frameworks
+        run: bash scripts/ci-build-player.sh native
+      - name: Save completed native outputs
+        if: success() && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: core-xprojects/**/build
+          key: ${{ steps.native-key.outputs.key }}
+      - name: Build Telegram application
+        id: application
+        run: bash scripts/ci-build-player.sh application
+      - name: Sign, verify and smoke-test application
+        id: package
+        run: bash scripts/ci-build-player.sh package
+      - name: Upload verified application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-Player-macOS-${{ env.PLAYER_ARCH }}-${{ github.run_number }}
+          path: |
+            build/Telegram-Player-macOS.zip
+            build/Telegram-Player-macOS.sha256
+            build/output/BUILD.txt
+            docs/ENHANCED_PLAYER.md
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve compiled input only when packaging failed
+        if: failure() && steps.application.outcome == 'success' && steps.package.outcome == 'failure'
+        run: |
+          mkdir -p build/recovery
+          ditto -c -k --sequesterRsrc --keepParent build/DerivedData/Build/Products/Release/Telegram.app build/recovery/UNVERIFIED-compiled-input.zip
+          git rev-parse HEAD > build/recovery/SOURCE_REVISION.txt
+          echo 'Internal recovery only. Signing or launch verification FAILED. This is NOT a deliverable application.' > build/recovery/NOT-A-RELEASE.txt
+      - name: Upload packaging recovery input
+        if: failure() && steps.application.outcome == 'success' && steps.package.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNVERIFIED-packaging-recovery-${{ github.run_number }}
+          path: build/recovery
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_number }}
+          path: |
+            build/logs
+            build/Application.xcresult
+          if-no-files-found: error
+          retention-days: 7
+      - name: Write build result summary
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          echo "## Full application build: $BUILD_STATUS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Architecture choice: $PLAYER_ARCH" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build/logs/errors.txt ]; then
+            printf '\n```text\n' >> "$GITHUB_STEP_SUMMARY"
+            head -60 build/logs/errors.txt >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f build/Telegram-Player-macOS.zip ]; then
+            echo 'Verified app artifact includes BUILD.txt and a SHA-256 checksum.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '**No verified installable application was produced by this run.**' >> "$GITHUB_STEP_SUMMARY"
+          fi

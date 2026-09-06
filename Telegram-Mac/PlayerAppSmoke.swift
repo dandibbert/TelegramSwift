@@ -1,0 +1,254 @@
+// Opt-in, account-free integration smoke test for the *built Telegram app*.
+// It renders production TGUIKit settings and the real SVideoView/HUD/menu.
+// The media source below is a deterministic fake, not a playback benchmark.
+import Cocoa
+import TGUIKit
+import TelegramMedia
+import TelegramMediaPlayer
+import TelegramCore
+import SwiftSignalKit
+import RangeSet
+import ColorPalette
+import ThemeSettings
+
+private final class SmokeMediaView: View, UniversalVideoContentView {
+    var duration: Double { 600 }
+    var ready: Signal<Void, NoError> { .single(()) }
+    var status: Signal<MediaPlayerStatus, NoError> { .single(MediaPlayerStatus(generationTimestamp: 0, duration: 600, dimensions: .zero, timestamp: 100, baseRate: 1, volume: 0.8, seekId: 0, status: .paused)) }
+    var bufferingStatus: Signal<(RangeSet<Int64>, Int64)?, NoError> { .single(nil) }
+    var fileRef: FileMediaReference { fatalError("Smoke media must never request a Telegram file") }
+    private(set) var lastLayoutSize = CGSize.zero
+    func updateLayout(size: CGSize, transition: ContainedViewLayoutTransition) { lastLayoutSize = size }
+    func play() {}
+    func pause() {}
+    func togglePlayPause() {}
+    func setSoundEnabled(_ value: Bool) {}
+    func setVolume(_ value: Float) {}
+    func seek(_ timestamp: Double) {}
+    func playOnceWithSound(playAndRecord: Bool, actionAtEnd: MediaPlayerActionAtEnd) {}
+    func setSoundMuted(soundMuted: Bool) {}
+    func setBaseRate(_ baseRate: Double) {}
+    func setVideoQuality(_ videoQuality: UniversalVideoContentVideoQuality) {}
+    func videoQualityState() -> (current: Int, preferred: UniversalVideoContentVideoQuality, available: [Int])? { (1080, .auto, [1080, 720, 480]) }
+    func addPlaybackCompleted(_ f: @escaping () -> Void) -> Int { 0 }
+    func removePlaybackCompleted(_ index: Int) {}
+    func fetchControl(_ control: UniversalVideoNodeFetchControl) {}
+    func setVideoLayerGravity(_ gravity: AVLayerVideoGravity) {}
+}
+
+private final class SmokePlayerTarget: PlayerCommandTarget {
+    let view: SVideoView
+    var playerView: NSView { view }
+    var playerPresentation = PlayerPresentation.detached
+    var playerInputAllowed: Bool { true }
+    var playerKeyboardAllowed: Bool { !view.isInMenu && !contextMenuOnScreen() }
+    var playerSnapshot = PlayerSnapshot(position: 100, duration: 600, volume: 0.8, rate: 1, playing: false)
+    var actions: [PlayerAction] = []
+    var seeks: [Double] = []
+    init(view: SVideoView) { self.view = view }
+    func playerPerform(_ action: PlayerAction) { actions.append(action) }
+    func playerSeek(to timestamp: Double) { seeks.append(timestamp) }
+    func playerPreviewSeek(to timestamp: Double) { view.status = view.status?.withUpdatedTimestamp(timestamp) }
+    func playerSetVolume(_ volume: Double) { playerSnapshot.volume = volume }
+    func playerSetRate(_ rate: Double, persist: Bool) { playerSnapshot.rate = rate }
+    func playerCanHandleMouse(at point: NSPoint) -> Bool { view.enhancedCanHandleMouse(at: point) }
+    func playerShowControls(_ show: Bool) { view.hideControls(!show, animated: false) }
+}
+
+enum PlayerAppSmoke {
+    private static var runner: Runner?
+    static func run(window: Window, directory: String) {
+        runner = Runner(window: window, directory: directory)
+        runner?.start()
+    }
+    private final class Runner {
+        let window: Window
+        let directory: URL
+        let store: PlayerSettingsStore
+        let defaults: UserDefaults
+        let suite = "io.github.dandibbert.TelegramPlayer.smoke"
+        var navigation: NavigationViewController?
+        var target: SmokePlayerTarget?
+        var input: PlayerInputController?
+        var checks: [String] = []
+        var frames: [String] = []
+        init(window: Window, directory: String) {
+            self.window = window; self.directory = URL(fileURLWithPath: directory, isDirectory: true)
+            defaults = UserDefaults(suiteName: suite)!
+            defaults.removePersistentDomain(forName: suite)
+            store = PlayerSettingsStore(defaults: defaults)
+        }
+        func start() {
+            do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+            catch { fail("Cannot create smoke output") }
+            setDefaultTheme(for: window)
+            check(!shouldRemoveChatForForumTransition(becameForum: true, isUserCapabilityUpgrade: true, lostThreadInfo: false, displayForumAsTabs: true, isMonoForum: false),
+                  "Bot forum capability discovery preserves the current chat controller")
+            check(shouldRemoveChatForForumTransition(becameForum: true, isUserCapabilityUpgrade: false, lostThreadInfo: false, displayForumAsTabs: false, isMonoForum: false),
+                  "Channel forum-mode conversion keeps the original navigation rebuild")
+            check(!shouldRemoveChatForForumTransition(becameForum: false, isUserCapabilityUpgrade: false, lostThreadInfo: true, displayForumAsTabs: true, isMonoForum: false),
+                  "Integrated forum tabs do not discard a selected thread during refresh")
+            window.setContentSize(NSSize(width: 600, height: 680))
+            window.makeKeyAndOrderFront(nil)
+            showPage(.controls, name: "controls") {
+                self.store.update { $0.defaultPresentation = .detached }
+                self.check(self.store.preferences.defaultPresentation == .detached, "Default detached mode persists")
+                self.showPage(.windows, name: "windows") {
+                    self.showPage(.shortcuts, name: "shortcuts") {
+                        telegramUpdateTheme(generateTheme(palette: darkPalette, cloudTheme: nil, bubbled: false, fontSize: 13, wallpaper: ThemeWallpaper()), window: self.window, animated: false)
+                        self.showPage(.controls, name: "controls-dark") { self.showVideo() }
+                    }
+                }
+            }
+        }
+        func showPage(_ page: PlayerSettingsPage, name: String, completion: @escaping() -> Void) {
+            navigation?.viewDidDisappear(false)
+            navigation?.view.removeFromSuperview()
+            let controller = PlayerSettingsController(page: page, store: store)
+            let nav = NavigationViewController(controller, window)
+            nav._frameRect = window.contentView!.bounds
+            nav.view.frame = window.contentView!.bounds
+            nav.view.autoresizingMask = [.width, .height]
+            window.contentView!.addSubview(nav.view)
+            nav.viewDidAppear(false)
+            navigation = nav
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                self.check(controller.tableView.count > 3, "Production settings populated: " + name)
+                self.snapshot(name, view: nav.view)
+                completion()
+            }
+        }
+        func showVideo() {
+            navigation?.viewDidDisappear(false); navigation?.view.removeFromSuperview(); navigation = nil
+            window.setContentSize(NSSize(width: 880, height: 495))
+            let media = SmokeMediaView(frame: .zero)
+            media.backgroundColor = NSColor(rgb: 0x18212b)
+            let video = SVideoView(frame: window.contentView!.bounds, mediaPlayer: media)
+            video.autoresizingMask = [.width, .height]
+            window.contentView!.addSubview(video)
+            let player = SmokePlayerTarget(view: video)
+            target = player
+            let input = PlayerInputController(target: player, store: store)
+            self.input = input
+            video.enhancedAction = { [weak input] action in input?.perform(action) }
+            video.enhancedIsFloating = { true }
+            video.enhancedIsPinned = { false }
+            video.status = MediaPlayerStatus(generationTimestamp: 0, duration: 600, dimensions: NSSize(width: 1920, height: 1080), timestamp: 100, baseRate: 1, volume: 0.8, seekId: 0, status: .paused)
+            video.enhancedRefreshSeekButtons()
+            video.hideControls(false, animated: false)
+            input.activate()
+            for size in [NSSize(width: 1200, height: 675), NSSize(width: 640, height: 360), NSSize(width: 960, height: 540)] {
+                video.setFrameSize(size)
+                self.check(media.frame.size == size, "Video backend frame follows live detached resize")
+                self.check(media.lastLayoutSize == size, "Video backend layout is synchronous with resize")
+            }
+            for size in [NSSize(width: 1100, height: 620), NSSize(width: 700, height: 420)] {
+                window.setContentSize(size)
+                window.contentView?.layoutSubtreeIfNeeded()
+                self.check(media.frame.size == video.bounds.size, "Window resizing propagates to video backend")
+                self.check(media.lastLayoutSize == video.bounds.size, "Window resizing propagates explicit backend layout")
+            }
+            window.setContentSize(NSSize(width: 880, height: 495))
+            video.frame = window.contentView!.bounds
+            input.perform(.seekForward)
+            self.check(player.seeks == [105], "First seek dispatch is synchronous")
+            for _ in 0..<8 { input.perform(.seekForward) }
+            self.check(player.seeks == [105], "Repeats cannot cancel decoder seeks")
+            input.observe(position: 105, generation: 1, buffering: true)
+            self.check(player.seeks == [105], "Buffering is not completion")
+            input.observe(position: 105, generation: 1, buffering: false)
+            self.check(player.seeks == [105, 145], "Completion chases only latest target")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.snapshot("detached-hud", view: video)
+                video.setMode(.pip, animated: false)
+                video.setFrameSize(NSSize(width: 340, height: 190))
+                input.show("+15 s", detail: "02:25 / 10:00")
+                self.snapshot("mini-hud", view: video)
+                self.testMenu(video: video, player: player)
+            }
+        }
+        func testMenu(video: SVideoView, player: SmokePlayerTarget) {
+            video.setMode(.normal, animated: false)
+            video.frame = window.contentView!.bounds
+            guard let menu = video.enhancedMakeMenu() else { fail("Missing production player menu") }
+            // Invoke real production menu callbacks while the popup is active.
+            // These must not be blocked by the keyboard-only menu guard.
+            let commands = Array(menu.contextItems.suffix(4))
+            check(commands.count == 4, "Production menu has four player commands")
+            check(commands.allSatisfy { !$0.title.contains("    ") }, "Shortcut labels use a separate trailing column")
+            for item in commands {
+                menu.onShow(menu)
+                item.handler?()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.check(player.actions == [.detach, .pictureInPicture, .pin, .settings], "All mouse menu callbacks dispatch exactly once")
+                self.testControlDrags(video: video)
+                self.input?.deactivate()
+                self.finish()
+            }
+        }
+        func testControlDrags(video: SVideoView) {
+            func descendants(_ view: NSView) -> [NSView] {
+                return view.subviews.flatMap { [$0] + descendants($0) }
+            }
+            for mode: PictureInPictureControlMode in [.normal, .pip] {
+                video.setMode(mode, animated: false)
+                video.hideControls(false, animated: false)
+                video.layoutSubtreeIfNeeded()
+                let sliders = descendants(video).compactMap { $0 as? LinearProgressControl }
+                self.check(sliders.count == 2, "Production timeline and volume sliders exist")
+                for slider in sliders {
+                    var commits = 0
+                    slider.onUserChanged = { _ in commits += 1 }
+                    let location = slider.convert(NSPoint(x: slider.bounds.midX, y: slider.bounds.midY), to: nil)
+                    guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                        modifierFlags: [], timestamp: 0, windowNumber: self.window.windowNumber,
+                        context: nil, eventNumber: 1, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-down fixture") }
+                    slider.mouseDown(with: down)
+                    // A HUD/preview can be the last subview. Drag completion
+                    // must target the active slider, not subview ordering.
+                    let overlay = NSView(frame: video.bounds)
+                    video.addSubview(overlay)
+                    self.check(slider.hasTemporaryState, "Slider captures the drag")
+                    self.check(!video.enhancedCanHandleMouse(at: NSPoint(x: video.bounds.midX, y: video.bounds.midY)),
+                               "Canvas gestures cannot steal a captured slider release")
+                    guard let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                        modifierFlags: [], timestamp: 0.1, windowNumber: self.window.windowNumber,
+                        context: nil, eventNumber: 2, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-up fixture") }
+                    self.check(video.enhancedFinishControlDrag(with: up), "Drag release reaches its owning slider")
+                    self.check(!slider.hasTemporaryState && commits == 1, "Drag commits once and clears capture")
+                    self.check(!video.enhancedFinishControlDrag(with: up) && commits == 1, "A forwarded release cannot commit twice")
+                    overlay.removeFromSuperview()
+                }
+            }
+        }
+        func snapshot(_ name: String, view: NSView) {
+            view.layoutSubtreeIfNeeded()
+            guard let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { fail("Cannot capture " + name) }
+            view.cacheDisplay(in: view.bounds, to: image)
+            do {
+                try image.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(name + ".png"))
+                frames.append(name + ".png")
+            } catch { fail("Cannot save " + name) }
+        }
+        func check(_ condition: Bool, _ description: String) {
+            guard condition else { fail(description) }
+            checks.append(description)
+        }
+        func fail(_ reason: String) -> Never {
+            print("PLAYER_UI_SMOKE_FAILED: " + reason)
+            exit(1)
+        }
+        func finish() {
+            defaults.removePersistentDomain(forName: suite)
+            let report: [String: Any] = ["passed": true, "checks": checks, "snapshots": frames,
+                "coverage": "Production TGUIKit settings, SVideoView/HUD and menu callbacks; deterministic fake media. No account or real streaming playback."]
+            do {
+                let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                try data.write(to: directory.appendingPathComponent("result.json"))
+            } catch { fail("Cannot save report") }
+            print("PLAYER_UI_SMOKE_PASSED: \(checks.count) checks")
+            exit(0)
+        }
+    }
+}

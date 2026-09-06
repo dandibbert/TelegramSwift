@@ -20,6 +20,7 @@ import TelegramMedia
 class MGalleryVideoItem: MGalleryItem {
     var startTime: TimeInterval = 0
     private var playAfter:Bool = false
+    private var didApplyInitialPresentation = false
     private let controller: SVideoController
     var playerState: Signal<AVPlayerState, NoError> {
         return controller.status |> map { value in
@@ -50,7 +51,8 @@ class MGalleryVideoItem: MGalleryItem {
         
         controller.togglePictureInPictureImpl = { [weak self] enter, control in
             guard let `self` = self else {return}
-            let frame = control.view.window!.convertToScreen(control.view.convert(control.view.bounds, to: nil))
+            guard let sourceWindow = control.view.window else { return }
+            let frame = sourceWindow.convertToScreen(control.view.convert(control.view.bounds, to: nil))
             if enter, let viewer = viewer {
                 closeGalleryViewer(false)
                 showPipVideo(control: control, viewer: viewer, item: self, origin: frame.origin, delegate: viewer.delegate, contentInteractions: viewer.contentInteractions, type: viewer.type)
@@ -81,9 +83,27 @@ class MGalleryVideoItem: MGalleryItem {
             isPausedGlobalPlayer = pauseMusic
         }
         
-        controller.play(startTime)
+        if let resume = controller.enhancedResumeOnGallery {
+            controller.enhancedResumeOnGallery = nil
+            if resume { controller.play() } else { controller.pause() }
+        } else {
+            controller.play(startTime)
+        }
         controller.viewDidAppear(false)
         self.startTime = 0
+
+        if !didApplyInitialPresentation {
+            didApplyInitialPresentation = true
+            let preferences = PlayerSettingsStore.shared.preferences
+            if preferences.enabled && preferences.defaultPresentation != .gallery {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, getGalleryViewer()?.enhancedIsSelectedVideo(self) == true,
+                          self.controller.enhancedPresentation == .gallery else { return }
+                    self.controller.enhancedInitialPresentation = preferences.defaultPresentation
+                    self.controller.togglePictureInPicture()
+                }
+            }
+        }
         
         
         updateMagnifyDisposable.set((magnify.get() |> deliverOnMainQueue).start(next: { [weak self] value in
@@ -101,7 +121,7 @@ class MGalleryVideoItem: MGalleryItem {
     
     override func disappear(for view: NSView?) {
         super.disappear(for: view)
-        if isPausedGlobalPlayer {
+        if isPausedGlobalPlayer && controller.style != .pictureInPicture {
             _ = context.sharedContext.getAudioPlayer()?.play()
         }
         if controller.style != .pictureInPicture {
@@ -112,6 +132,13 @@ class MGalleryVideoItem: MGalleryItem {
         playAfter = false
     }
     
+    func enhancedGalleryWillClose() {
+        if controller.enhancedPresentation == .gallery {
+            controller.pause()
+            controller.enhancedInput?.deactivate()
+        }
+    }
+
     override var status:Signal<MediaResourceStatus, NoError> {
         if media.isStreamable {
             return .single(.Local)

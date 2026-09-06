@@ -1,0 +1,47 @@
+name: Player Framework Regression
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch only the syntax highlighter dependencies
+        run: |
+          git config --global url.https://github.com/.insteadOf git@github.com:
+          git submodule update --init --depth 1 -- submodules/libprisma submodules/regex
+      - name: Verify and compile the actual framework for both Mac architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/logs
+          project=submodules/CodeSyntax/CodeSyntax/CodeSyntax.xcodeproj
+          common=(-project "$project" -scheme CodeSyntax -configuration Release -destination 'generic/platform=macOS' -derivedDataPath build/FrameworkRegression CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MODULE_VERIFIER_KIND=builtin)
+          xcodebuild -showBuildSettings -json "${common[@]}" > build/logs/framework-settings.json
+          python3 - <<'PY'
+          import json
+          settings = json.load(open('build/logs/framework-settings.json'))
+          target = next(item['buildSettings'] for item in settings if item['target'] == 'CodeSyntax')
+          assert target['ENABLE_MODULE_VERIFIER'] == 'YES', 'Module verification must not be disabled'
+          assert target['MODULE_VERIFIER_KIND'] == 'builtin', 'Use the compiler-backed module verifier'
+          print('Module verification remains enabled for the real CodeSyntax target.')
+          PY
+          xcodebuild build "${common[@]}" -jobs 3 -resultBundlePath build/FrameworkRegression.xcresult 2>&1 | tee build/logs/framework-regression.log
+          lipo -info build/FrameworkRegression/Build/Products/Release/CodeSyntax.framework/CodeSyntax | tee build/logs/framework-architectures.txt
+      - name: Upload framework regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: framework-regression-${{ github.run_number }}
+          path: |
+            build/logs
+            build/FrameworkRegression.xcresult
+          retention-days: 7

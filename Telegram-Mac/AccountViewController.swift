@@ -135,6 +135,7 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
     case stories(index: Int, viewType: GeneralViewType)
     case attach(index: Int, AttachMenuBot, viewType: GeneralViewType)
     case general(index: Int, viewType: GeneralViewType)
+    case playback(index: Int, viewType: GeneralViewType)
     case stickers(index: Int, viewType: GeneralViewType)
     case notifications(index: Int, viewType: GeneralViewType, status: UNUserNotifications.AuthorizationStatus)
     case language(index: Int, viewType: GeneralViewType, current: String)
@@ -174,6 +175,8 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             return .index(5)
         case .general:
             return .index(6)
+        case .playback:
+            return .index(-100)
         case .proxy:
             return .index(7)
         case .notifications:
@@ -236,6 +239,8 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
         case let  .stories(index, _):
             return index
         case let .attach(index, _, _):
+            return index
+        case let .playback(index, _):
             return index
         case let  .general(index, _):
             return index
@@ -332,6 +337,10 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().accountSettingsAddAccount, nameStyle: ControlStyle(font: .normal(.title), foregroundColor: theme.colors.accentIcon), type: .none, viewType: viewType, action: {
                 arguments.addAccount(accounts)
             }, thumb: GeneralThumbAdditional(thumb: theme.icons.account_add_account, textInset: 35, thumbInset: 0), border:[BorderType.Right], inset:NSEdgeInsets(left: 12, right: 12))
+        case let .playback(_, viewType):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: playerText("播放器", "Playback"), icon: theme.icons.settingsGeneral, activeIcon: theme.icons.settingsGeneralActive, type: .next, viewType: viewType, action: {
+                arguments.presentController(PlayerSettingsController(), true)
+            }, border: [BorderType.Right], inset: NSEdgeInsets(left: 12, right: 12))
         case let .general(_, viewType):
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().accountSettingsGeneral, icon: theme.icons.settingsGeneral, activeIcon: theme.icons.settingsGeneralActive, type: .next, viewType: viewType, action: {
                 arguments.presentController(GeneralSettingsViewController(arguments.context), true)
@@ -599,6 +608,8 @@ private func accountInfoEntries(peerView:PeerView, context: AccountContext, acco
     index += 1
     
     entries.append(.general(index: index, viewType: .singleItem))
+    index += 1
+    entries.append(.playback(index: index, viewType: .singleItem))
     index += 1
     entries.append(.notifications(index: index, viewType: .singleItem, status: unAuthStatus))
     index += 1

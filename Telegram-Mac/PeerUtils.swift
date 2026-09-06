@@ -753,6 +753,9 @@ extension Peer {
     }
     
     var isForum: Bool {
+        if let user = self as? TelegramUser {
+            return user.botInfo?.flags.contains(.hasForum) == true
+        }
         if let channel = self as? TelegramChannel {
             return channel.flags.contains(.isForum)
         } else {

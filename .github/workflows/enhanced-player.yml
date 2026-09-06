@@ -72,11 +72,37 @@ jobs:
             build/logs
           if-no-files-found: error
           retention-days: 7
+  compatibility:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch exact core source and apply version-bound compatibility patch
+        run: |
+          git config --global url.https://github.com/.insteadOf git@github.com:
+          git submodule update --init --depth 1 -- submodules/telegram-ios
+          python3 scripts/apply-bot-forum-compat.py
+      - name: Test actual API serializers and response decoders
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          swift test --package-path packages/BotForumCompatibilityTests 2>&1 | tee build/logs/bot-forum-api-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bot-forum-compatibility-${{ github.run_number }}
+          path: build/logs
+          retention-days: 7
   framework:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
     uses: ./.github/workflows/player-framework-check.yml
   build:
-    needs: [source, test, framework]
+    needs: [source, test, compatibility, framework]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
     runs-on: macos-15
     timeout-minutes: 150

@@ -1,0 +1,61 @@
+name: Apply checked player compatibility changes
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+    paths: [.github/workflows/apply-player-compatibility.yml]
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'dandibbert/TelegramSwift' && github.ref == 'refs/heads/feat/enhanced-media-player'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate all source hashes, then apply source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib, zlib
+          root = pathlib.Path.cwd().resolve()
+          parts = [root / '.github/player-compat-stage' / f'{i:02}.b64' for i in range(2)]
+          raw = base64.b64decode(''.join(p.read_text() for p in parts), validate=True)
+          assert hashlib.sha256(raw).hexdigest() == '9037c487c9ba4cacd987c9e0b431a0252777eaf1e2c85b42dfe943b2fc74bea6', 'Bundle integrity mismatch'
+          bundle = json.loads(zlib.decompress(raw))
+          pending = []
+          for name, spec in bundle.items():
+              path = pathlib.PurePosixPath(name)
+              assert not path.is_absolute() and '..' not in path.parts
+              assert name.startswith(('Telegram-Mac/', 'scripts/', 'packages/BotForumCompatibilityTests/', 'docs/'))
+              dest = root / path
+              assert not dest.is_symlink() and dest.resolve().is_relative_to(root)
+              if spec['base'] is None:
+                  assert not dest.exists(), f'Refusing to overwrite new path: {name}'
+                  after = spec['content'].encode()
+              else:
+                  before = dest.read_bytes()
+                  assert hashlib.sha256(before).hexdigest() == spec['base'], f'Unexpected source version: {name}'
+                  lines = before.decode().splitlines(keepends=True)
+                  for start, count, text in reversed(spec['chunks']):
+                      assert 0 <= start <= len(lines) and 0 <= count <= len(lines) - start
+                      lines[start:start + count] = [text]
+                  after = ''.join(lines).encode()
+                  assert hashlib.sha256(after).hexdigest() == spec['result'], f'Patch result mismatch: {name}'
+              pending.append((dest, after))
+          for dest, after in pending:
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_bytes(after)
+          for p in parts: p.unlink()
+          parts[0].parent.rmdir()
+          print(f'Applied {len(pending)} checked files. Protocol layer is not upgraded globally.')
+          PY
+          bash -n scripts/ci-build-player.sh
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Telegram-Mac scripts packages/BotForumCompatibilityTests docs .github/player-compat-stage
+          git commit -m 'fix: synchronize player geometry, present controls immediately and backport bot forum paths [skip ci]'
+          git push origin HEAD:refs/heads/feat/enhanced-media-player

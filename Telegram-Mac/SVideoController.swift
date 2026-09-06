@@ -318,7 +318,8 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         if let window = window {
             setHandlersOn(window: window)
         }
-        
+        playerShowControls(true)
+        updateIdleTimer()
     }
     
     override func viewDidDisappear(_ animated: Bool) {
@@ -497,6 +498,18 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
         }
         
         let duration = Double(reference.media.duration ?? 0)
+        // HLS/WKWebView startup is asynchronous. Use metadata immediately for
+        // the timeline and menu without claiming any bytes are buffered.
+        if genericView.status == nil {
+            let initial = MediaPlayerStatus(generationTimestamp: 0, duration: duration,
+                dimensions: reference.media.dimensions?.size ?? .zero, timestamp: 0,
+                baseRate: enhancedCurrentRate, volume: FastSettings.volumeRate,
+                seekId: 0, status: .buffering(initial: true, whilePlaying: false))
+            _ = statusValue.swap(initial)
+            genericView.status = initial
+        }
+        genericView.enhancedRefreshSeekButtons()
+        genericView.updateLayout(size: genericView.bounds.size, transition: .immediate)
         
         statusDisposable.set((mediaPlayer.status |> deliverOnMainQueue).start(next: { [weak self] status in
             let status = status.withUpdatedDuration(status.duration != 0 ? status.duration : duration)
@@ -786,7 +799,7 @@ extension SVideoController: PlayerCommandTarget {
             position += max(0, CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
             position = min(position, status.duration)
         }
-        return PlayerSnapshot(position: position, duration: status?.duration ?? 0,
+        return PlayerSnapshot(position: position, duration: status?.duration ?? Double(reference.media.duration ?? 0),
                               volume: Double(genericView.status?.volume ?? FastSettings.volumeRate),
                               rate: enhancedCurrentRate, playing: !isPaused, seekGeneration: status?.seekId ?? 0)
     }

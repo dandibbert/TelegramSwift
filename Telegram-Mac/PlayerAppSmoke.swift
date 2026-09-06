@@ -17,7 +17,8 @@ private final class SmokeMediaView: View, UniversalVideoContentView {
     var status: Signal<MediaPlayerStatus, NoError> { .single(MediaPlayerStatus(generationTimestamp: 0, duration: 600, dimensions: .zero, timestamp: 100, baseRate: 1, volume: 0.8, seekId: 0, status: .paused)) }
     var bufferingStatus: Signal<(RangeSet<Int64>, Int64)?, NoError> { .single(nil) }
     var fileRef: FileMediaReference { fatalError("Smoke media must never request a Telegram file") }
-    func updateLayout(size: CGSize, transition: ContainedViewLayoutTransition) {}
+    private(set) var lastLayoutSize = CGSize.zero
+    func updateLayout(size: CGSize, transition: ContainedViewLayoutTransition) { lastLayoutSize = size }
     func play() {}
     func pause() {}
     func togglePlayPause() {}
@@ -130,6 +131,19 @@ enum PlayerAppSmoke {
             video.enhancedRefreshSeekButtons()
             video.hideControls(false, animated: false)
             input.activate()
+            for size in [NSSize(width: 1200, height: 675), NSSize(width: 640, height: 360), NSSize(width: 960, height: 540)] {
+                video.setFrameSize(size)
+                self.check(media.frame.size == size, "Video backend frame follows live detached resize")
+                self.check(media.lastLayoutSize == size, "Video backend layout is synchronous with resize")
+            }
+            for size in [NSSize(width: 1100, height: 620), NSSize(width: 700, height: 420)] {
+                window.setContentSize(size)
+                window.contentView?.layoutSubtreeIfNeeded()
+                self.check(media.frame.size == video.bounds.size, "Window resizing propagates to video backend")
+                self.check(media.lastLayoutSize == video.bounds.size, "Window resizing propagates explicit backend layout")
+            }
+            window.setContentSize(NSSize(width: 880, height: 495))
+            video.frame = window.contentView!.bounds
             input.perform(.seekForward)
             self.check(player.seeks == [105], "First seek dispatch is synchronous")
             for _ in 0..<8 { input.perform(.seekForward) }

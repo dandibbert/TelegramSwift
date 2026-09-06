@@ -150,7 +150,9 @@ struct ForumUI {
             
         }
         
-        _ = context.engine.peers.updateForumViewAsMessages(peerId: peerId, value: false).start()
+        if peerId.namespace == Namespaces.Peer.CloudChannel {
+            _ = context.engine.peers.updateForumViewAsMessages(peerId: peerId, value: false).start()
+        }
         
         let ready: Promise<Bool> = Promise()
         

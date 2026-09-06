@@ -6318,13 +6318,13 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
             
             let threadId = item.uniqueId
                         
-            guard let peer = self?.chatInteraction.peer as? TelegramChannel else {
+            guard let peer = self?.chatInteraction.peer else {
                 return .single([])
             }
             
             if let item = item.item, let threadData = item.threadData {
                 
-                if threadData.isOwnedByMe || peer.isAdmin {
+                if ((peer as? TelegramUser)?.botInfo?.flags.contains(.forumManagedByUser) ?? (threadData.isOwnedByMe || (peer as? TelegramChannel)?.isAdmin == true)) {
                     items.append(ContextMenuItem(strings().navigationEdit, handler: {
                         ForumUI.editTopic(peer.id, data: threadData, threadId: threadId, context: context)
                     }, itemImage: MenuAnimation.menu_edit.value))
@@ -6340,7 +6340,7 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
                 let isMuted = item.isMuted
                 let isClosedTopic = threadData.isClosed
                 
-                if peer.hasPermission(.pinMessages) {
+                if ((peer as? TelegramUser)?.botInfo?.flags.contains(.forumManagedByUser) ?? ((peer as? TelegramChannel)?.hasPermission(.pinMessages) == true)) {
                     items.append(ContextMenuItem(!isPinned ? strings().chatListContextPin : strings().chatListContextUnpin, handler: {
                         let signal = context.engine.peers.toggleForumChannelTopicPinned(id: peerId, threadId: threadId) |> deliverOnMainQueue
                         
@@ -6360,7 +6360,7 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
                 }, itemImage: isMuted ? MenuAnimation.menu_unmuted.value : MenuAnimation.menu_mute.value))
         
                 
-                if threadData.isOwnedByMe || peer.isAdmin {
+                if ((peer as? TelegramUser)?.botInfo?.flags.contains(.forumManagedByUser) ?? (threadData.isOwnedByMe || (peer as? TelegramChannel)?.isAdmin == true)) {
                     items.append(ContextMenuItem(!isClosedTopic ? strings().chatListContextPause : strings().chatListContextStart, handler: {
                         _ = context.engine.peers.setForumChannelTopicClosed(id: peerId, threadId: threadId, isClosed: !isClosedTopic).startStandalone()
                     }, itemImage: !isClosedTopic ? MenuAnimation.menu_pause.value : MenuAnimation.menu_play.value))
@@ -7068,17 +7068,19 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
         
         
         
+        // Read-only server capability discovery, once for this chat controller.
+        _ = refreshBotForumCapability(account: context.account, peerId: peerId).start()
         let monoforumTopics: Promise<[EngineChatList.Item]?> = Promise()
 
-        monoforumTopics.set(self.peerView.get() |> map { peerView -> TelegramChannel? in
-            if let peerView = peerView as? PeerView, let channel = peerViewMainPeer(peerView) as? TelegramChannel {
-                return channel
+        monoforumTopics.set(self.peerView.get() |> map { peerView -> EnginePeer? in
+            if let peerView = peerView as? PeerView, let peer = peerViewMainPeer(peerView) {
+                return EnginePeer(peer)
             } else {
                 return nil
             }
-        } |> distinctUntilChanged |> mapToQueue { channel in
-            if let channel {
-                if channel.flags.contains(.isMonoforum), channel.groupAccess.canManageDirect {
+        } |> distinctUntilChanged |> mapToQueue { value in
+            if let channel = value?._asPeer() {
+                if channel.isMonoForum, channel.groupAccess.canManageDirect {
                     return chatListViewForLocation(chatListLocation: .savedMessagesChats(peerId: peerId), location: .Initial(0, nil), filter: nil, account: context.account) |> map {
                         return $0.list.items.reversed()
                     }
@@ -8553,7 +8555,8 @@ class ChatController: EditableViewController<ChatControllerView>, Notifable, Tab
                     }, itemImage: MenuAnimation.menu_schedule_message.value))
                 case .history:
                     
-                    if let peer = peerViewMainPeer(peerView), peer.isForum && peer.displayForumAsTabs {
+                    if let peer = peerViewMainPeer(peerView), peer.isForum && peer.displayForumAsTabs,
+                       (peer as? TelegramUser).map({ $0.botInfo?.flags.contains(.forumManagedByUser) == true }) ?? true {
                         items.append(ContextMenuItem(strings().forumTopicContextNew, handler: {
                             ForumUI.createTopic(peer.id, context: context)
                         }, itemImage: MenuAnimation.menu_plus.value))

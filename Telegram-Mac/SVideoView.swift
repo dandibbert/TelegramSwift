@@ -1288,6 +1288,8 @@ class SVideoView: NSView {
     
     var isStreamable: Bool = true
     
+    private var enhancedLayoutReady = false
+    private var enhancedLayingOut = false
     private var previewView: PreviewView?
     private var overlayPreview: ImageView?
     
@@ -1418,6 +1420,9 @@ class SVideoView: NSView {
     }
     
     func updateLayout(size: NSSize, transition: ContainedViewLayoutTransition) {
+        guard !enhancedLayingOut, size.width > 0, size.height > 0 else { return }
+        enhancedLayingOut = true
+        defer { enhancedLayingOut = false }
         let oldSize = mediaPlayer.frame.size
         transition.updateFrame(view: mediaPlayer, frame: NSRect(origin: .zero, size: size))
         mediaPlayer.updateLayout(size: size, transition: transition)
@@ -1570,6 +1575,10 @@ class SVideoView: NSView {
         if initialedSize == NSZeroSize {
             self.initialedSize = newSize
         }
+        // This NSView is frame-based, unlike TGUIKit.View. AppKit's autoresize
+        // changes its frame but does not guarantee a layout() callback. Update
+        // the actual backend/video layer now, including during live resize.
+        if enhancedLayoutReady { updateLayout(size: bounds.size, transition: .immediate) }
     }
     
     override func mouseUp(with event: NSEvent) {
@@ -1785,6 +1794,8 @@ class SVideoView: NSView {
         bufferingIndicatorValueDisposable.set(bufferingIndicatorValue.get().start(next: { [weak self] isHidden in
             self?.bufferingIndicator.isHidden = isHidden
         }))
+        enhancedLayoutReady = true
+        updateLayout(size: bounds.size, transition: .immediate)
     }
     
     deinit {

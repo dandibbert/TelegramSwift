@@ -1132,6 +1132,23 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         if let selectedView = controller.selectedViewController?.view as? MagnifyView, let item = self.selectedItem {
             item.request()
             lockedTransition = true
+            if item is MGalleryVideoItem && PlayerSettingsStore.shared.preferences.enabled {
+                // A streaming video's thumbnail may arrive seconds later (or
+                // never). Presentation and keyboard activation are not media
+                // readiness: do not hold them behind item.image.get().
+                ioDisposabe.set(nil)
+                selectedView.isHidden = false
+                selectedView.contentSize = item.sizeValue.fitted(contentFrame.size)
+                selectedView.swapView(selectedView.contentView)
+                self.hasInited = true
+                self.lockedTransition = false
+                item.appear(for: selectedView.contentView)
+                addVideoTimebase?((item.stableId, selectedView.contentView))
+                showBackground?()
+                completion?()
+                self.window.applyResponderIfNeeded()
+                return
+            }
             if let oldView = from(item.stableId), let oldWindow = oldView.window, let oldScreen = oldWindow.screen {
                 selectedView.isHidden = true
                 

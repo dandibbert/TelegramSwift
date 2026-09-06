@@ -40,6 +40,7 @@ prepare() {
   git config --global url.https://gitlab.com/.insteadOf git@gitlab.com:
   git submodule sync --recursive
   git -c protocol.version=2 submodule update --init --recursive --depth 1 --jobs 4 2>&1 | tee build/logs/submodules.log
+  python3 scripts/apply-bot-forum-compat.py
   brew install ninja autoconf automake libtool yasm nasm pkg-config meson
   python3 -m venv "$TOOLS"
   "$TOOLS/bin/pip" install 'cmake==3.31.6'

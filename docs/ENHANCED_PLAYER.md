@@ -134,3 +134,30 @@ HUD 改为直接绘制文字的紧凑提示，不在帧布局播放器中嵌套�
 和 SVideoView，核验菜单回调、即时首次跳转、串行追帧、缓冲状态隔离，并输出截图。
 该检查使用确定性的假媒体，不连接 Telegram，也不等于真实网络视频播放测试。
 CI 只有这项检查、签名与常规启动检查全部通过才上传可安装包。
+
+
+## Window readiness and bot topics compatibility
+
+Detached live resize now synchronously relays geometry to the media backend,
+including its explicit updateLayout hook. Enhanced video presentation does not
+wait for a thumbnail download. Controls use metadata immediately; buffering is
+still shown honestly until the media backend is ready.
+
+This native Mac base is the July 2025 public TelegramSwift source, not the recent
+Telegram-iOS source used by Swiftgram. This patch is a narrow bot-forum backport,
+not a claim of parity with all newer Telegram features. The pinned API layer is
+unchanged; peer-based forum methods and compatible response parsers are added
+without changing existing channel RPCs. A successful read-only forum listing can
+discover the capability when an older user constructor omits it. Create/manage
+rights are taken only from server flags, never guessed from the bot's name.
+
+For supported private bot topics the existing native topic sidebar/history are
+reused. Select a topic before composing. The New Topic action uses the native
+name form, creates the topic first and only then opens it; it does not silently
+send an overview draft to General. This is an explicit create-first flow, not a
+copy of the newest client's auto-named New Thread composer. No account data is
+migrated or deleted. Topic deletion remains scoped to its thread.
+
+The protocol fixture tests exercise actual serializers and parsers; production
+smoke checks exercise window geometry and UI with fake media. Neither substitutes
+for an authenticated Telegram server test or real streaming-video performance.

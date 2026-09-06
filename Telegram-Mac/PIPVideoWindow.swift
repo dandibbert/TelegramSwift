@@ -138,6 +138,8 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
         keepOnScreen()
         next.makeKeyAndOrderFront(nil)
         control.enhancedSetPresentation(presentation)
+        control.view.frame = root.bounds
+        control.genericView.updateLayout(size: root.bounds.size, transition: .immediate)
         control.playerShowControls(true)
         isChangingWindow = false
     }
@@ -227,7 +229,14 @@ private final class FloatingVideoSession: NSObject, NSWindowDelegate {
     func windowDidFailToEnterFullScreen(_ window: NSWindow) { transitioning = false; applyWindowPolicy() }
     func windowDidFailToExitFullScreen(_ window: NSWindow) { transitioning = false; applyWindowPolicy() }
     func windowDidMove(_ notification: Notification) { scheduleSave() }
-    func windowDidResize(_ notification: Notification) { scheduleSave() }
+    func windowDidResize(_ notification: Notification) {
+        // Do not defer video geometry to the 300 ms window-state save timer.
+        if let root = window?.contentView {
+            control.view.frame = root.bounds
+            control.genericView.updateLayout(size: root.bounds.size, transition: .immediate)
+        }
+        scheduleSave()
+    }
     private func scheduleSave() {
         guard !isChangingWindow, !transitioning else { return }
         saveWork?.cancel()

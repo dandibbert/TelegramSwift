@@ -1209,7 +1209,24 @@ class SVideoView: NSView {
 
     var enhancedPlaybackControlsAllowed: Bool { adMessageView == nil }
 
+    private var enhancedActiveSliders: [LinearProgressControl] {
+        if let pip = pipControls { return [pip.progress, pip.volumeSlider] }
+        return [controls.progress, controls.volumeSlider]
+    }
+    var enhancedControlDragInProgress: Bool {
+        return enhancedActiveSliders.contains { $0.hasTemporaryState }
+    }
+    // A Window-level mouse-up handler runs before normal AppKit dispatch.
+    // Only finish an explicitly captured control, then consume the event
+    // so AppKit cannot deliver that same release to the slider a second time.
+    @discardableResult
+    func enhancedFinishControlDrag(with event: NSEvent) -> Bool {
+        guard let slider = enhancedActiveSliders.first(where: { $0.hasTemporaryState }) else { return false }
+        slider.mouseUp(with: event)
+        return true
+    }
     func enhancedCanHandleMouse(at point: NSPoint) -> Bool {
+        if enhancedControlDragInProgress { return false }
         if let adMessageView, !adMessageView.isHidden, adMessageView.frame.contains(point) { return false }
         if let pip = pipControls, !pip.isHidden {
             let controls: [NSView] = [pip.playOrPause, pip.progress, pip.volumeContainer, pip.close, pip.fullscreen]
@@ -1556,6 +1573,7 @@ class SVideoView: NSView {
     }
     
     override func mouseUp(with event: NSEvent) {
+        if enhancedFinishControlDrag(with: event) { return }
         let point = self.convert(event.locationInWindow, from: nil)
         if !NSPointInRect(point, controls.frame) {
             super.mouseUp(with: event)
@@ -1805,7 +1823,7 @@ class SVideoView: NSView {
     }
     
     var mouseDownIncontrols: Bool {
-        return self.controls.progress.hasTemporaryState
+        return enhancedControlDragInProgress
     }
     
     private var currentPreviewState: MediaPlayerFramePreviewResult?

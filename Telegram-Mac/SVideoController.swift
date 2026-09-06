@@ -278,8 +278,7 @@ class SVideoController: GenericViewController<SVideoView>, PictureInPictureContr
                 }
             }
             self.updateIdleTimer()
-            self.genericView.subviews.last?.mouseUp(with: event)
-            return .rejected
+            return self.genericView.enhancedFinishControlDrag(with: event) ? .invoked : .rejected
         }, with: self, for: .leftMouseUp, priority: .modal)
         
 //        self.updateControls = SwiftSignalKit.Timer(timeout: 2.0, repeat: true, completion: { [weak self] in

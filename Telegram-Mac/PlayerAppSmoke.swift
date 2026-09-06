@@ -8,6 +8,8 @@ import TelegramMediaPlayer
 import TelegramCore
 import SwiftSignalKit
 import RangeSet
+import ColorPalette
+import ThemeSettings
 
 private final class SmokeMediaView: View, UniversalVideoContentView {
     var duration: Double { 600 }
@@ -160,8 +162,44 @@ enum PlayerAppSmoke {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.check(player.actions == [.detach, .pictureInPicture, .pin, .settings], "All mouse menu callbacks dispatch exactly once")
+                self.testControlDrags(video: video)
                 self.input?.deactivate()
                 self.finish()
+            }
+        }
+        func testControlDrags(video: SVideoView) {
+            func descendants(_ view: NSView) -> [NSView] {
+                return view.subviews.flatMap { [$0] + descendants($0) }
+            }
+            for mode: PictureInPictureControlMode in [.normal, .pip] {
+                video.setMode(mode, animated: false)
+                video.hideControls(false, animated: false)
+                video.layoutSubtreeIfNeeded()
+                let sliders = descendants(video).compactMap { $0 as? LinearProgressControl }
+                self.check(sliders.count == 2, "Production timeline and volume sliders exist")
+                for slider in sliders {
+                    var commits = 0
+                    slider.onUserChanged = { _ in commits += 1 }
+                    let location = slider.convert(NSPoint(x: slider.bounds.midX, y: slider.bounds.midY), to: nil)
+                    guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                        modifierFlags: [], timestamp: 0, windowNumber: self.window.windowNumber,
+                        context: nil, eventNumber: 1, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-down fixture") }
+                    slider.mouseDown(with: down)
+                    // A HUD/preview can be the last subview. Drag completion
+                    // must target the active slider, not subview ordering.
+                    let overlay = NSView(frame: video.bounds)
+                    video.addSubview(overlay)
+                    self.check(slider.hasTemporaryState, "Slider captures the drag")
+                    self.check(!video.enhancedCanHandleMouse(at: NSPoint(x: video.bounds.midX, y: video.bounds.midY)),
+                               "Canvas gestures cannot steal a captured slider release")
+                    guard let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                        modifierFlags: [], timestamp: 0.1, windowNumber: self.window.windowNumber,
+                        context: nil, eventNumber: 2, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-up fixture") }
+                    self.check(video.enhancedFinishControlDrag(with: up), "Drag release reaches its owning slider")
+                    self.check(!slider.hasTemporaryState && commits == 1, "Drag commits once and clears capture")
+                    self.check(!video.enhancedFinishControlDrag(with: up) && commits == 1, "A forwarded release cannot commit twice")
+                    overlay.removeFromSuperview()
+                }
             }
         }
         func snapshot(_ name: String, view: NSView) {

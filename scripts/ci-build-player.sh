@@ -46,11 +46,23 @@ native() {
   touch build/.native-ready
 }
 application() {
+  # The external verifier in this Xcode build diagnoses an absent private
+  # module while inspecting the versioned CodeSyntax framework. Keep module
+  # verification enabled, but use Xcode's compiler-backed verifier instead.
+  # Do not disable diagnostics, skip failed targets or manufacture an app.
+  local status=0
   xcodebuild build -workspace Telegram-Mac.xcworkspace -scheme Telegram \
     -configuration Release -destination 'generic/platform=macOS' \
-    -derivedDataPath build/DerivedData -jobs 3 \
-    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-    2>&1 | tee build/logs/application.log
+    -derivedDataPath build/DerivedData -resultBundlePath build/Application.xcresult -jobs 3 \
+    MODULE_VERIFIER_KIND=builtin CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+    2>&1 | tee build/logs/application.log || status=$?
+  if [[ $status -ne 0 ]]; then
+    grep -nE 'error:|fatal error:|BUILD FAILED|The following build commands failed:' build/logs/application.log > build/logs/errors.txt || true
+    cat build/logs/errors.txt
+    # Include generated maps/headers, not just a misleading final exit code.
+    find build/DerivedData/Build -path '*CodeSyntax*' \( -name '*.modulemap' -o -name '*diagnostic-filename-map.json' \) -type f -print -exec cat {} \; > build/logs/module-maps.txt
+  fi
+  return "$status"
 }
 package_app() {
   test -f packages/EnhancedMediaPlayer/Package.swift
@@ -70,9 +82,7 @@ package_app() {
   local exe
   exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
   lipo -info "$app/Contents/MacOS/$exe" | tee build/logs/architectures.log
-  # A clean CI runner has no personal API credentials: launch must reach the
-  # first-run credential dialog without missing libraries or an early crash.
-  # This is a launch smoke test, not a logged-in video playback test.
+  # This is a no-credentials launch smoke test, not a logged-in playback test.
   "$app/Contents/MacOS/$exe" > build/logs/launch.log 2>&1 &
   local pid=$!
   trap 'kill "$pid" 2>/dev/null || true' EXIT

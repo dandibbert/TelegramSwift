@@ -16,7 +16,25 @@ DEVELOPMENT_TEAM =
 ENABLE_USER_SCRIPT_SANDBOXING = NO
 COMPILER_INDEX_STORE_ENABLE = NO
 CONFIG
+preflight() {
+  case "${PLAYER_ARCH:-arm64}" in
+    arm64|universal) ;;
+    *) echo 'PLAYER_ARCH must be arm64 or universal' >&2; return 2 ;;
+  esac
+  python3 - <<'CHECK'
+import pathlib, plistlib
+root = pathlib.Path.cwd()
+info = plistlib.loads((root / 'Telegram-Mac/Info.plist').read_bytes())
+for key in ('CFBundleDisplayName', 'CFBundleName'):
+    assert info.get(key) == 'Telegram Player', f'Missing personal app metadata: {key}'
+assert info['CFBundleExecutable'] == '$(EXECUTABLE_NAME)'
+assert 'ensurePersonalCredentials' in (root / 'packages/ApiCredentials/Sources/ApiCredentials/Config.swift').read_text()
+assert (root / 'packages/EnhancedMediaPlayer/Package.swift').is_file()
+print('Application metadata and feature integration preflight passed.')
+CHECK
+}
 prepare() {
+  preflight
   xcodebuild -version
   git config --global url.https://github.com/.insteadOf git@github.com:
   git config --global url.https://gitlab.com/.insteadOf git@gitlab.com:
@@ -46,20 +64,38 @@ native() {
   touch build/.native-ready
 }
 application() {
-  # The external verifier in this Xcode build diagnoses an absent private
-  # module while inspecting the versioned CodeSyntax framework. Keep module
-  # verification enabled, but use Xcode's compiler-backed verifier instead.
-  # Do not disable diagnostics, skip failed targets or manufacture an app.
+  # Keep verification enabled, using Xcode's compiler-backed verifier.
   local status=0
+  local archs
+  case "${PLAYER_ARCH:-arm64}" in
+    arm64) archs=arm64 ;;
+    universal) archs='arm64 x86_64' ;;
+    *) echo 'Unsupported PLAYER_ARCH' >&2; return 2 ;;
+  esac
+  printf 'Building optimized Release for: %s\n' "$archs" | tee build/logs/build-target.txt
+  # Preserve compiler resource observations for diagnosing slow WMO builds.
+  (
+    while true; do
+      date -u
+      ps -A -o pid,ppid,pcpu,rss,etime,comm | grep -E 'swift|clang|xcodebuild' || true
+      sysctl vm.swapusage || true
+      sleep 30
+    done
+  ) > build/logs/compiler-resources.log 2>&1 &
+  local monitor_pid=$!
+  trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
   xcodebuild build -workspace Telegram-Mac.xcworkspace -scheme Telegram \
     -configuration Release -destination 'generic/platform=macOS' \
-    -derivedDataPath build/DerivedData -resultBundlePath build/Application.xcresult -jobs 3 \
-    MODULE_VERIFIER_KIND=builtin CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+    -derivedDataPath build/DerivedData -resultBundlePath build/Application.xcresult -jobs 2 \
+    "ARCHS=$archs" ONLY_ACTIVE_ARCH=NO MODULE_VERIFIER_KIND=builtin \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
     2>&1 | tee build/logs/application.log || status=$?
+  kill "$monitor_pid" 2>/dev/null || true
+  wait "$monitor_pid" 2>/dev/null || true
+  trap - EXIT
   if [[ $status -ne 0 ]]; then
     grep -nE 'error:|fatal error:|BUILD FAILED|The following build commands failed:' build/logs/application.log > build/logs/errors.txt || true
     cat build/logs/errors.txt
-    # Include generated maps/headers, not just a misleading final exit code.
     find build/DerivedData/Build -path '*CodeSyntax*' \( -name '*.modulemap' -o -name '*diagnostic-filename-map.json' \) -type f -print -exec cat {} \; > build/logs/module-maps.txt
   fi
   return "$status"
@@ -77,6 +113,8 @@ package_app() {
   /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Telegram Player' "$plist"
   /usr/libexec/PlistBuddy -c 'Set :CFBundleName Telegram Player' "$plist"
   test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = io.github.dandibbert.TelegramPlayer
+  # Clear only this build copy's resource forks/Finder metadata before signing.
+  xattr -cr "$app"
   codesign --force --deep --sign - "$app"
   codesign --verify --deep --strict "$app"
   local exe
@@ -98,6 +136,7 @@ package_app() {
   cp docs/ENHANCED_PLAYER.md build/output/README.md
   cat > build/output/BUILD.txt <<INFO
 Commit: $(git rev-parse HEAD)
+Architectures: $(lipo -archs "$app/Contents/MacOS/$exe")
 Xcode: $(xcodebuild -version | tr '\n' ' ')
 Signing: ad-hoc personal build, not notarized
 Credentials: first-launch dialog; API hash stays in the local Keychain
@@ -108,10 +147,11 @@ INFO
   shasum -a 256 build/Telegram-Player-macOS.zip | tee build/Telegram-Player-macOS.sha256
 }
 case "${1:-all}" in
+  preflight) preflight ;;
   prepare) prepare ;;
   native) native ;;
   application) application ;;
   package) package_app ;;
   all) prepare; native; application; package_app ;;
-  *) echo 'Usage: ci-build-player.sh [prepare|native|application|package|all]' >&2; exit 2 ;;
+  *) echo 'Usage: ci-build-player.sh [preflight|prepare|native|application|package|all]' >&2; exit 2 ;;
 esac

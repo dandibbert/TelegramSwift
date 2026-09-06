@@ -1,0 +1,108 @@
+name: Repair player build 40
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+    paths: [.github/workflows/repair-player-build-40.yml]
+permissions:
+  contents: read
+jobs:
+  repair:
+    if: github.repository == 'dandibbert/TelegramSwift' && github.ref == 'refs/heads/feat/enhanced-media-player'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply checked source fixes and drag regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib
+          def patch(name, digest, edits):
+              p = pathlib.Path(name)
+              before = p.read_bytes()
+              assert hashlib.sha256(before).hexdigest() == digest, f'Unexpected source: {name}'
+              text = before.decode()
+              for old, new in edits:
+                  assert text.count(old) == 1, f'Non-unique edit: {name}'
+                  text = text.replace(old, new, 1)
+              p.write_text(text)
+          drag_test = '''        func testControlDrags(video: SVideoView) {
+                      func descendants(_ view: NSView) -> [NSView] {
+                          return view.subviews.flatMap { [$0] + descendants($0) }
+                      }
+                      for mode: PictureInPictureControlMode in [.normal, .pip] {
+                          video.setMode(mode, animated: false)
+                          video.hideControls(false, animated: false)
+                          video.layoutSubtreeIfNeeded()
+                          let sliders = descendants(video).compactMap { $0 as? LinearProgressControl }
+                          self.check(sliders.count == 2, "Production timeline and volume sliders exist")
+                          for slider in sliders {
+                              var commits = 0
+                              slider.onUserChanged = { _ in commits += 1 }
+                              let location = slider.convert(NSPoint(x: slider.bounds.midX, y: slider.bounds.midY), to: nil)
+                              guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                                  modifierFlags: [], timestamp: 0, windowNumber: self.window.windowNumber,
+                                  context: nil, eventNumber: 1, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-down fixture") }
+                              slider.mouseDown(with: down)
+                              // A HUD/preview can be the last subview. Drag completion
+                              // must target the active slider, not subview ordering.
+                              let overlay = NSView(frame: video.bounds)
+                              video.addSubview(overlay)
+                              self.check(slider.hasTemporaryState, "Slider captures the drag")
+                              self.check(!video.enhancedCanHandleMouse(at: NSPoint(x: video.bounds.midX, y: video.bounds.midY)),
+                                         "Canvas gestures cannot steal a captured slider release")
+                              guard let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                                  modifierFlags: [], timestamp: 0.1, windowNumber: self.window.windowNumber,
+                                  context: nil, eventNumber: 2, clickCount: 1, pressure: 0) else { self.fail("Missing mouse-up fixture") }
+                              self.check(video.enhancedFinishControlDrag(with: up), "Drag release reaches its owning slider")
+                              self.check(!slider.hasTemporaryState && commits == 1, "Drag commits once and clears capture")
+                              self.check(!video.enhancedFinishControlDrag(with: up) && commits == 1, "A forwarded release cannot commit twice")
+                              overlay.removeFromSuperview()
+                          }
+                      }
+                  }
+          '''
+          patch('Telegram-Mac/PlayerAppSmoke.swift',
+                'b81416036b155815ee9d75cc92ae91731d50e2dd1c8acbf7139e1984ba2a0209', [
+                  ('import RangeSet\n', 'import RangeSet\nimport ColorPalette\nimport ThemeSettings\n'),
+                  ('                self.input?.deactivate()\n                self.finish()',
+                   '                self.testControlDrags(video: video)\n                self.input?.deactivate()\n                self.finish()'),
+                  ('        func snapshot(_ name: String, view: NSView) {', drag_test + '        func snapshot(_ name: String, view: NSView) {')])
+          drag_helpers = '''    private var enhancedActiveSliders: [LinearProgressControl] {
+                  if let pip = pipControls { return [pip.progress, pip.volumeSlider] }
+                  return [controls.progress, controls.volumeSlider]
+              }
+              var enhancedControlDragInProgress: Bool {
+                  return enhancedActiveSliders.contains { $0.hasTemporaryState }
+              }
+              // A Window-level mouse-up handler runs before normal AppKit dispatch.
+              // Only finish an explicitly captured control, then consume the event
+              // so AppKit cannot deliver that same release to the slider a second time.
+              @discardableResult
+              func enhancedFinishControlDrag(with event: NSEvent) -> Bool {
+                  guard let slider = enhancedActiveSliders.first(where: { $0.hasTemporaryState }) else { return false }
+                  slider.mouseUp(with: event)
+                  return true
+              }
+          '''
+          patch('Telegram-Mac/SVideoView.swift',
+                '42293eb209053fb55c85205729dc14271871cb783c76c01e8c58c0e15586d7a3', [
+                  ('    func enhancedCanHandleMouse(at point: NSPoint) -> Bool {',
+                   drag_helpers + '    func enhancedCanHandleMouse(at point: NSPoint) -> Bool {\n        if enhancedControlDragInProgress { return false }'),
+                  ('    override func mouseUp(with event: NSEvent) {\n        let point = self.convert(event.locationInWindow, from: nil)',
+                   '    override func mouseUp(with event: NSEvent) {\n        if enhancedFinishControlDrag(with: event) { return }\n        let point = self.convert(event.locationInWindow, from: nil)'),
+                  ('        return self.controls.progress.hasTemporaryState', '        return enhancedControlDragInProgress')])
+          patch('Telegram-Mac/SVideoController.swift',
+                'd8f1bdd1822efe3f1a4ece5e5a5b1bf560505bdd25b3a257fbab8c4d4981e74d', [
+                  ('            self.genericView.subviews.last?.mouseUp(with: event)\n            return .rejected',
+                   '            return self.genericView.enhancedFinishControlDrag(with: event) ? .invoked : .rejected')])
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Telegram-Mac/PlayerAppSmoke.swift Telegram-Mac/SVideoView.swift Telegram-Mac/SVideoController.swift
+          git commit -m 'fix: import production themes and route scrub releases to active controls [skip ci]'
+          git push origin HEAD:refs/heads/feat/enhanced-media-player

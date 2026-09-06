@@ -8,7 +8,28 @@ on:
 permissions:
   contents: read
 jobs:
+  source:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact build source for diagnostics
+        run: |
+          git archive --format=tar.gz --output="$RUNNER_TEMP/player-source.tar.gz" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_REVISION.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-source-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/player-source.tar.gz
+            ${{ runner.temp }}/SOURCE_REVISION.txt
+          retention-days: 3
   test:
+    # A same-repository PR already gets its push tests; do not run everything twice.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15
     timeout-minutes: 20
     concurrency:
@@ -23,19 +44,24 @@ jobs:
       - name: Test player engine and AppKit integration
         env:
           PLAYER_UI_SNAPSHOT_DIR: ${{ runner.temp }}/player-ui
-        run: swift test --package-path packages/EnhancedMediaPlayer
+        run: |
+          set -o pipefail
+          mkdir -p build/logs
+          swift test --package-path packages/EnhancedMediaPlayer 2>&1 | tee build/logs/player-tests.log
       - name: Typecheck personal credential bootstrap
-        run: swift build --package-path packages/ApiCredentials
-      - name: Upload settings UI smoke snapshots
+        run: |
+          set -o pipefail
+          swift build --package-path packages/ApiCredentials 2>&1 | tee build/logs/credentials-build.log
+      - name: Upload tests and UI snapshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: player-ui-smoke-${{ github.run_number }}
-          path: ${{ runner.temp }}/player-ui
-          if-no-files-found: warn
+          name: player-tests-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/player-ui
+            build/logs
+          if-no-files-found: error
           retention-days: 7
-  # Native compilation is expensive. Every push runs tests; manually dispatch
-  # the workflow or add [build app] to a commit to also build an installable app.
   build:
     needs: test
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[build app]'))
@@ -43,7 +69,7 @@ jobs:
     timeout-minutes: 150
     concurrency:
       group: player-build-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,5 +116,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-diagnostics-${{ github.run_number }}
-          path: build/logs
+          path: |
+            build/logs
+            build/Application.xcresult
+          if-no-files-found: error
           retention-days: 7
+      - name: Write build result summary
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          echo "## Full application build: $BUILD_STATUS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build/logs/errors.txt ]; then
+            printf '\n```text\n' >> "$GITHUB_STEP_SUMMARY"
+            head -60 build/logs/errors.txt >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f build/Telegram-Player-macOS.zip ]; then
+            echo 'App artifact includes BUILD.txt and a SHA-256 checksum.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '**No installable application was produced by this run.**' >> "$GITHUB_STEP_SUMMARY"
+          fi

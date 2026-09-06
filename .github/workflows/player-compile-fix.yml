@@ -1,0 +1,71 @@
+name: Apply player compile corrections
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+    paths: [.github/workflows/player-compile-fix.yml]
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'dandibbert/TelegramSwift' && github.ref == 'refs/heads/feat/enhanced-media-player'
+    runs-on: macos-15
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply two exact source corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib
+          def patch(name, digest, edits):
+              p = pathlib.Path(name)
+              data = p.read_bytes()
+              assert hashlib.sha256(data).hexdigest() == digest, f'Unexpected source revision: {name}'
+              text = data.decode()
+              for before, after in edits:
+                  assert text.count(before) == 1, f'Non-unique edit: {name}'
+                  text = text.replace(before, after, 1)
+              p.write_text(text)
+          helper = '''import AVFoundation
+
+          // Keep the 10.14 API behind an independently typechecked function,
+          // including calls from the nested signal/state-update closures.
+          private func desktopCaptureCameraIsAuthorized() -> Bool {
+              if #available(OSX 10.14, *) {
+                  return AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+              } else {
+                  return true
+              }
+          }
+          '''
+          patch('Telegram-Mac/SVideoView.swift',
+              '0af6c51dc04de23bfcbdff018e59b8c6206b305c3983d6f23ed6be27c26b57c3', [
+                  ('button.set(image: image, for: .Normal)',
+                   'button.set(image: image.precomposed(), for: .Normal)')])
+          patch('Telegram-Mac/DesktopCaptureListUI.swift',
+              '7345dd2e3808835027674dada889144af0cf2586653358d2e0b1eb6189b96fd6', [
+                  ('import SwiftSignalKit\n', 'import SwiftSignalKit\n' + helper),
+                  ('''                if #available(macOS 10.14, *) {
+                              current.access = .init(sharing: screenCaptureAvailable(), camera: AVCaptureDevice.authorizationStatus(for: .video) == .authorized)
+                          } else {
+                              current.access = .init(sharing: screenCaptureAvailable(), camera: true)
+                          }''',
+                   '                current.access = .init(sharing: screenCaptureAvailable(), camera: desktopCaptureCameraIsAuthorized())')])
+          pathlib.Path('/tmp/player-camera-availability.swift').write_text(helper)
+          PY
+          # Check the exact production helper against both supported deployment
+          # floors instead of raising the app's minimum OS to conceal the error.
+          sdk=$(xcrun --sdk macosx --show-sdk-path)
+          xcrun swiftc -typecheck -target x86_64-apple-macosx10.13 -sdk "$sdk" /tmp/player-camera-availability.swift
+          xcrun swiftc -typecheck -target arm64-apple-macosx11.0 -sdk "$sdk" /tmp/player-camera-availability.swift
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Telegram-Mac/SVideoView.swift Telegram-Mac/DesktopCaptureListUI.swift
+          git commit -m 'fix: convert seek button images and isolate camera API availability [skip ci]'
+          git push origin HEAD:refs/heads/feat/enhanced-media-player

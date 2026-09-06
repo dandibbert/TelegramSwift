@@ -1,0 +1,32 @@
+name: Player compatibility source inspection
+on:
+  push:
+    branches: [feat/enhanced-media-player]
+    paths: [.github/workflows/player-compat-inspect.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Retrieve exact pinned protocol sources
+        run: |
+          git config --global url.https://github.com/.insteadOf git@github.com:
+          git submodule update --init --depth 1 -- submodules/telegram-ios
+          mkdir -p /tmp/player-compat/pinned
+          cd submodules/telegram-ios
+          git rev-parse HEAD > /tmp/player-compat/PINNED_REVISION.txt
+          tar -cf - submodules/TelegramCore/Sources submodules/TelegramApi submodules/Postbox/Sources submodules/TelegramMedia submodules/TelegramMediaPlayer 2>/dev/null | tar -xf - -C /tmp/player-compat/pinned
+      - name: Capture public API schema for comparison
+        run: |
+          curl --fail --location --retry 2 https://core.telegram.org/schema/json -o /tmp/player-compat/current-schema.json
+          tar -czf /tmp/player-compat.tar.gz -C /tmp/player-compat .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-compat-source
+          path: /tmp/player-compat.tar.gz
+          retention-days: 3
